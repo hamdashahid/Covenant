@@ -4,8 +4,9 @@ from typing import Any
 
 
 class InterviewAgent:
-    def __init__(self, interview_policy: list[dict[str, str]]) -> None:
+    def __init__(self, interview_policy: list[dict[str, str]], system_prompt: str) -> None:
         self.interview_policy = interview_policy
+        self.system_prompt = system_prompt.strip()
 
     def _next_question(self, state: dict[str, Any]) -> tuple[str, str]:
         followup_field = state.get("followup_field")
@@ -27,6 +28,8 @@ class InterviewAgent:
         user_response = input("Applicant: ").strip()
 
         history = list(state.get("conversation_history", []))
+        if not history and self.system_prompt:
+            history.append({"role": "system", "content": self.system_prompt})
         history.append({"role": "assistant", "content": question})
         history.append({"role": "user", "content": user_response})
 
