@@ -56,6 +56,21 @@ class SQLiteStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS eligibility_report_rules (
+                    session_id TEXT NOT NULL,
+                    rule_name TEXT NOT NULL,
+                    passed INTEGER NOT NULL,
+                    observed_value TEXT NOT NULL,
+                    threshold_value TEXT NOT NULL,
+                    comparison TEXT NOT NULL,
+                    details TEXT NOT NULL,
+                    evaluated_at TEXT NOT NULL,
+                    PRIMARY KEY (session_id, rule_name)
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS messages (
                     message_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -182,6 +197,9 @@ class SQLiteStore:
 
     def close_session(self, session_id: str, report: dict[str, Any]) -> None:
         now = _utc_now()
+        rule_trace = report.get("rule_trace", [])
+        if not isinstance(rule_trace, list):
+            rule_trace = []
         with self._connect() as conn:
             conn.execute(
                 """
@@ -205,7 +223,39 @@ class SQLiteStore:
                     session_id,
                     str(report.get("status", "Requires More Info")),
                     str(report.get("summary", "")),
-                    json.dumps(report.get("failed_rules", report.get("missing_fields", []))),
+                    json.dumps(rule_trace),
                     now,
                 ),
+            )
+            conn.execute(
+                "DELETE FROM eligibility_report_rules WHERE session_id = ?",
+                (session_id,),
+            )
+            conn.executemany(
+                """
+                INSERT INTO eligibility_report_rules (
+                    session_id,
+                    rule_name,
+                    passed,
+                    observed_value,
+                    threshold_value,
+                    comparison,
+                    details,
+                    evaluated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        session_id,
+                        str(rule.get("rule_name", "unknown_rule")),
+                        1 if bool(rule.get("passed", False)) else 0,
+                        json.dumps(rule.get("observed_value")),
+                        json.dumps(rule.get("threshold_value")),
+                        str(rule.get("comparison", "")),
+                        str(rule.get("details", "")),
+                        now,
+                    )
+                    for rule in rule_trace
+                ],
             )
