@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from typing import Any
 
 try:
@@ -20,17 +21,26 @@ class ClaudeClientAdapter:
     def extract_structured(self, prompt: str, latest_response: str) -> str:
         if not self._client:
             return self._fallback_extract(latest_response, "Anthropic client unavailable")
-        try:
-            response = self._client.messages.create(
-                model=self.model_id,
-                max_tokens=400,
-                temperature=0,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text_parts = [block.text for block in response.content if getattr(block, "type", "") == "text"]
-            return "\n".join(text_parts).strip()
-        except Exception as exc:  # pragma: no cover
-            return self._fallback_extract(latest_response, f"Anthropic API error: {exc}")
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                response = self._client.messages.create(
+                    model=self.model_id,
+                    max_tokens=400,
+                    temperature=0,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                text_parts = [block.text for block in response.content if getattr(block, "type", "") == "text"]
+                return "\n".join(text_parts).strip()
+            except Exception as exc:  # pragma: no cover
+                if attempt < max_attempts - 1:
+                    time.sleep(0.5 * (2**attempt))
+                    continue
+                return self._fallback_extract(
+                    latest_response,
+                    f"Anthropic API error after {max_attempts} attempts: {exc}",
+                )
+        return self._fallback_extract(latest_response, "Anthropic API error: unknown failure")
 
     def _fallback_extract(self, text: str, reason: str) -> str:
         lowered = text.lower()
