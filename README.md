@@ -4,21 +4,21 @@ Terminal-based conversational AI for mortgage eligibility assessment.
 
 ## Architecture
 
-CIAP is orchestrated with LangGraph and uses three core nodes:
+End-to-end flow:
 
-1. **Interview Agent** (`agents/interview_agent.py`)  
-   Asks one mortgage question per turn in terminal mode (stdin/stdout), following a configurable policy.
-2. **Extraction & Validation Node** (`agents/extraction_validation.py`)  
-   Performs a single LLM extraction call per turn, validates/coerces fields against schema, and assigns confidence.
-3. **Decision Agent** (`agents/decision_agent.py`)  
-   Checks if enough validated data is available. If not, routes back for follow-up. If yes, evaluates deterministic eligibility rules via `rules/rule_evaluator.py`.
+`Terminal Input + Configuration → Session Manager → Context Builder → LangGraph [Interview Agent → Extraction & Validation Node → Decision Agent (routes back to Interview Agent when data is incomplete)] → LLM Client Adapter → Profile Updater → Rule Evaluator (deterministic) → Persistence Layer (write + close session) → Final Decision printed to stdout`
 
-Supporting modules:
-- Session manager (`core/session_manager.py`) for start/resume and model/session tracking.
-- Context builder (`core/context_builder.py`) for LLM prompt assembly.
-- Profile updater (`core/profile_updater.py`) for merged profile updates + conflict detection.
-- Claude LLM adapter (`llm/claude_adapter.py`) with graceful fallback extraction.
-- SQLite persistence (`persistence/sqlite_store.py`) for sessions, profiles, and reports in `core.db`.
+Key implementation details:
+- **Single LLM provider/model:** Anthropic Claude Messages API only, using `claude-sonnet-4-6`.
+- **Interview system prompt config:** `config/prompts_system_prompt.txt`.
+- **Single validation point:** extraction + schema coercion happens in `agents/extraction_validation.py`; Decision Agent consumes validated profile and does not re-validate fields.
+- **Deterministic eligibility decision:** `rules/rule_evaluator.py` applies `rules/eligibility_rules.yaml` (non-LLM).
+- **Graceful degradation:** Claude API failures retry with backoff, then fallback extraction is used with a clear terminal error state.
+- **SQLite persistence (`core.db`) tables:**
+  - `sessions` (`session_id`, `model_id`, `session_state`, `created_at`, `closed_at`)
+  - `applicant_profiles`
+  - `eligibility_reports`
+  - `messages` (`message_id`, `session_id`, `role`, `content`, `message_timestamp`)
 
 ## Rules
 
@@ -39,7 +39,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `ANTHROPIC_API_KEY` in `.env` if you want live Claude extraction. Without a key, CIAP uses graceful fallback extraction.
+Set `ANTHROPIC_API_KEY` in `.env` for Claude API access. If API calls fail, CIAP retries with backoff, then enters a visible degraded extraction mode.
 
 ## Run
 
