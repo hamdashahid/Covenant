@@ -9,11 +9,12 @@ End-to-end flow:
 `Terminal Input + Configuration → Session Manager → Context Builder → LangGraph [Interview Agent → Extraction & Validation Node → Decision Agent (routes back to Interview Agent when data is incomplete)] → LLM Client Adapter → Profile Updater → Rule Evaluator (deterministic) → Persistence Layer (write + close session) → Final Decision printed to stdout`
 
 Key implementation details:
-- **Single LLM provider/model:** Anthropic Claude Messages API only, using `claude-sonnet-4-6`.
+- **Single LLM provider/model:** OpenAI Chat Completions API only, using `gpt-4o`.
 - **Interview system prompt config:** `config/prompts_system_prompt.txt`.
 - **Single validation point:** extraction + schema coercion happens in `agents/extraction_validation.py`; Decision Agent consumes validated profile and does not re-validate fields.
 - **Deterministic eligibility decision:** `rules/rule_evaluator.py` applies `rules/eligibility_rules.yaml` (non-LLM).
-- **Graceful degradation:** Claude API failures retry with backoff, then fallback extraction is used with a clear terminal error state.
+- **Graceful degradation:** OpenAI API failures retry with backoff, then fallback extraction is used with a clear terminal error state.
+- **Alternate adapter:** `llm/claude_adapter.py` (Anthropic Claude) ships in the repo as a drop-in alternative but is not wired into `main.py`; the app runs on `llm/openai_adapter.py` by default.
 - **SQLite persistence (`core.db`) tables:**
   - `sessions` (`session_id`, `model_id`, `session_state`, `created_at`, `closed_at`)
   - `applicant_profiles`
@@ -39,7 +40,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `ANTHROPIC_API_KEY` in `.env` for Claude API access. If API calls fail, CIAP retries with backoff, then enters a visible degraded extraction mode.
+Set `OPENAI_API_KEY` in `.env` for OpenAI API access. If API calls fail, CIAP retries with backoff, then enters a visible degraded extraction mode.
 
 ## Run
 

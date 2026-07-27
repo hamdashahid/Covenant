@@ -11,7 +11,7 @@ from core.profile_updater import ProfileUpdater
 from core.schemas import EXTRACTION_SCHEMA
 from core.session_manager import SessionManager
 from graph.ciap_graph import build_ciap_graph
-from llm.claude_adapter import ClaudeClientAdapter
+from llm.openai_adapter import OpenAIClientAdapter
 from persistence.sqlite_store import SQLiteStore
 from rules.rule_evaluator import RuleEvaluator
 
@@ -42,7 +42,7 @@ DEFAULT_POLICY = [
     },
 ]
 SYSTEM_PROMPT_PATH = Path("config") / "prompts_system_prompt.txt"
-MODEL_ID = "claude-sonnet-4-6"
+MODEL_ID = "gpt-4o"
 
 
 def _load_system_prompt(path: Path) -> str:
@@ -64,7 +64,7 @@ def main() -> None:
     print(f"Session ID: {session_id}")
     print("Starting CIAP interview... (Ctrl+C to exit; use --session-id to resume)")
 
-    llm_client = ClaudeClientAdapter(model_id=model_id)
+    llm_client = OpenAIClientAdapter(model_id=model_id)
     interview_agent = InterviewAgent(DEFAULT_POLICY, _load_system_prompt(SYSTEM_PROMPT_PATH))
     extraction_node = ExtractionValidationNode(
         llm_client=llm_client,
