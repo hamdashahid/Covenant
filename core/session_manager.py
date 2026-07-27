@@ -7,7 +7,7 @@ from persistence.sqlite_store import SQLiteStore
 
 
 class SessionManager:
-    def __init__(self, store: SQLiteStore, default_model_id: str = "claude-sonnet-4-6") -> None:
+    def __init__(self, store: SQLiteStore, default_model_id: str = "gpt-4o") -> None:
         self.store = store
         self.default_model_id = default_model_id
 
