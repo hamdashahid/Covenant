@@ -7,7 +7,7 @@ from persistence.sqlite_store import SQLiteStore
 
 
 class SessionManager:
-    def __init__(self, store: SQLiteStore, default_model_id: str = "claude-sonnet-4-6") -> None:
+    def __init__(self, store: SQLiteStore, default_model_id: str = "gpt-4o") -> None:
         self.store = store
         self.default_model_id = default_model_id
 
@@ -45,7 +45,7 @@ class SessionManager:
             "applicant_profile": {},
             "profile_conflicts": [],
             "turn_count": 0,
-            "max_turns": 8,
+            "max_turns": 8,#commit
             "decision_status": "Requires More Info",
             "decision_summary": "",
         }

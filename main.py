@@ -89,7 +89,7 @@ def main() -> None:
             if "Fallback extraction used:" in str(issue)
         ]
         if fallback_issues:
-            print(f"[ERROR] Claude API degraded mode: {fallback_issues[-1]}")
+            print(f"[ERROR] OpenAI API degraded mode: {fallback_issues[-1]}")
         session_manager.save_state(session_id, updated_state, completed=False)
 
     def on_completed(updated_state: dict) -> None:
