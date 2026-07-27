@@ -45,7 +45,7 @@ class SessionManager:
             "applicant_profile": {},
             "profile_conflicts": [],
             "turn_count": 0,
-            "max_turns": 8,
+            "max_turns": 8,#commit
             "decision_status": "Requires More Info",
             "decision_summary": "",
         }
