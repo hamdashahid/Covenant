@@ -4,7 +4,13 @@ import json
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any
+
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover
+    load_dotenv = None  # type: ignore
 
 try:
     from openai import OpenAI
@@ -21,8 +27,16 @@ class OpenAIClientAdapter:
 
     def __init__(self, model_id: str) -> None:
         self.model_id = model_id
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
+        self._load_environment()
         self._client = OpenAI(api_key=self.api_key) if (OpenAI and self.api_key) else None
+
+    def _load_environment(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        dotenv_path = repo_root / ".env"
+        if load_dotenv is not None:
+            load_dotenv(dotenv_path=dotenv_path, override=False)
+            load_dotenv(override=False)
+        self.api_key = str(os.getenv("OPENAI_API_KEY", "")).strip()
 
     def extract_structured(self, prompt: str, latest_response: str) -> str:
         if not self._client:
