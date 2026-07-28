@@ -31,7 +31,7 @@ class SessionManager:
                     "applicant_profile": profile,
                     "profile_conflicts": conflicts,
                     "turn_count": turn_count,
-                    "max_turns": 8,
+                    "max_turns": 16,
                     "decision_status": "Requires More Info",
                     "decision_summary": "",
                 }
@@ -45,7 +45,7 @@ class SessionManager:
             "applicant_profile": {},
             "profile_conflicts": [],
             "turn_count": 0,
-            "max_turns": 8,
+            "max_turns": 16,
             "decision_status": "Requires More Info",
             "decision_summary": "",
         }
