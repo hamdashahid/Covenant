@@ -1,0 +1,6 @@
+income_threshold: 50000
+max_dti_ratio: 0.43
+min_credit_score: 650
+allowed_employment_statuses:
+  - employed
+  - self-employed
