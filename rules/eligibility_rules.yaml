@@ -4,3 +4,6 @@ min_credit_score: 650
 allowed_employment_statuses:
   - employed
   - self-employed
+min_employment_years: 2
+max_ltv_ratio: 0.95
+min_down_payment_percent: 0.05
