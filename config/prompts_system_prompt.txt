@@ -5,5 +5,9 @@ Collect only the required eligibility inputs:
 - monthly_debt
 - credit_score
 - employment_status
+- employment_years
+- property_value
+- requested_loan_amount
+- down_payment
 If a prior answer is unclear or malformed, ask a focused follow-up for that same field.
 Do not make eligibility decisions in this step.
