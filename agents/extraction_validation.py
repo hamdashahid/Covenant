@@ -71,6 +71,36 @@ class ExtractionValidationNode:
             except (TypeError, ValueError):
                 issues.append("requested_loan_amount is invalid")
 
+        if "employment_years" in fields:
+            try:
+                value = float(fields["employment_years"])
+                if value >= 0:
+                    validated["employment_years"] = value
+                else:
+                    issues.append("employment_years must be >= 0")
+            except (TypeError, ValueError):
+                issues.append("employment_years is invalid")
+
+        if "property_value" in fields:
+            try:
+                value = float(fields["property_value"])
+                if value > 0:
+                    validated["property_value"] = value
+                else:
+                    issues.append("property_value must be > 0")
+            except (TypeError, ValueError):
+                issues.append("property_value is invalid")
+
+        if "down_payment" in fields:
+            try:
+                value = float(fields["down_payment"])
+                if value >= 0:
+                    validated["down_payment"] = value
+                else:
+                    issues.append("down_payment must be >= 0")
+            except (TypeError, ValueError):
+                issues.append("down_payment is invalid")
+
         return validated, issues
 
     def _parse_response(self, raw: str) -> tuple[dict[str, Any], float, list[str]]:

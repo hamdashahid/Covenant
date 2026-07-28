@@ -10,6 +10,7 @@ from core.context_builder import ContextBuilder
 from core.profile_updater import ProfileUpdater
 from core.schemas import EXTRACTION_SCHEMA
 from core.session_manager import SessionManager
+from core import terminal_ui
 from graph.ciap_graph import build_ciap_graph
 from llm.openai_adapter import OpenAIClientAdapter
 from persistence.sqlite_store import SQLiteStore
@@ -30,7 +31,7 @@ DEFAULT_POLICY = [
     },
     {
         "field": "monthly_debt",
-        "question": "What is your total monthly debt payment?",
+        "question": "What is your total monthly debt payment (loans, credit cards, etc.)?",
     },
     {
         "field": "credit_score",
@@ -38,7 +39,23 @@ DEFAULT_POLICY = [
     },
     {
         "field": "employment_status",
-        "question": "What is your current employment status?",
+        "question": "What is your current employment status (employed / self-employed / unemployed)?",
+    },
+    {
+        "field": "employment_years",
+        "question": "How many years have you been at your current job or business?",
+    },
+    {
+        "field": "property_value",
+        "question": "What is the value (price) of the property you want to buy?",
+    },
+    {
+        "field": "requested_loan_amount",
+        "question": "How much loan amount are you requesting?",
+    },
+    {
+        "field": "down_payment",
+        "question": "How much can you pay upfront as a down payment?",
     },
 ]
 SYSTEM_PROMPT_PATH = Path("config") / "prompts_system_prompt.txt"
@@ -61,8 +78,8 @@ def main() -> None:
     session_manager = SessionManager(store=store, default_model_id=MODEL_ID)
     session_id, model_id, state = session_manager.start_or_resume(args.session_id, MODEL_ID)
 
-    print(f"Session ID: {session_id}")
-    print("Starting CIAP interview... (Ctrl+C to exit; use --session-id to resume)")
+    terminal_ui.print_banner()
+    terminal_ui.print_session_info(session_id)
 
     llm_client = OpenAIClientAdapter(model_id=model_id)
     interview_agent = InterviewAgent(DEFAULT_POLICY, _load_system_prompt(SYSTEM_PROMPT_PATH))
@@ -89,7 +106,7 @@ def main() -> None:
             if "Fallback extraction used:" in str(issue)
         ]
         if fallback_issues:
-            print(f"[ERROR] Claude API degraded mode: {fallback_issues[-1]}")
+            terminal_ui.print_error(f"OpenAI API degraded mode: {fallback_issues[-1]}")
         session_manager.save_state(session_id, updated_state, completed=False)
 
     def on_completed(updated_state: dict) -> None:
@@ -106,9 +123,12 @@ def main() -> None:
     )
 
     final_state = graph.invoke(state)
-    print("\n=== Final Decision ===")
-    print(final_state.get("decision_status", "Requires More Info"))
-    print(final_state.get("decision_summary", "No summary available"))
+    terminal_ui.print_final_result(
+        status=final_state.get("decision_status", "Requires More Info"),
+        summary=final_state.get("decision_summary", "No summary available"),
+        profile=final_state.get("applicant_profile", {}),
+        report=final_state.get("final_report", {}),
+    )
 
 
 if __name__ == "__main__":
