@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from core import terminal_ui
+
 
 class InterviewAgent:
     def __init__(self, interview_policy: list[dict[str, str]], system_prompt: str) -> None:
@@ -24,8 +26,9 @@ class InterviewAgent:
 
     def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         field, question = self._next_question(state)
-        print(f"\nInterview Agent: {question}")
-        user_response = input("Applicant: ").strip()
+        terminal_ui.print_question(question, field, total_fields=len(self.interview_policy))
+        user_response = terminal_ui.get_answer_prompt()
+        terminal_ui.print_thinking()
 
         history = list(state.get("conversation_history", []))
         if not history and self.system_prompt:
