@@ -82,7 +82,7 @@ def main() -> None:
     terminal_ui.print_session_info(session_id)
 
     llm_client = OpenAIClientAdapter(model_id=model_id)
-    interview_agent = InterviewAgent(DEFAULT_POLICY, _load_system_prompt(SYSTEM_PROMPT_PATH))
+    interview_agent = InterviewAgent(DEFAULT_POLICY, _load_system_prompt(SYSTEM_PROMPT_PATH), llm_client=llm_client)
     extraction_node = ExtractionValidationNode(
         llm_client=llm_client,
         context_builder=ContextBuilder(),
