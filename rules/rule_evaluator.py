@@ -10,6 +10,10 @@ class RuleEvaluator:
         with open(rules_path, "r", encoding="utf-8") as f:
             self.rules = yaml.safe_load(f) or {}
 
+    @staticmethod
+    def _has_value(profile: dict[str, Any], key: str) -> bool:
+        return key in profile and profile[key] not in (None, "")
+
     def evaluate(self, profile: dict[str, Any]) -> dict[str, Any]:
         # ---- Pull raw values from the applicant profile ----
         annual_income = float(profile.get("annual_income", 0) or 0)
@@ -20,6 +24,10 @@ class RuleEvaluator:
         property_value = float(profile.get("property_value", 0) or 0)
         requested_loan_amount = float(profile.get("requested_loan_amount", 0) or 0)
         down_payment = float(profile.get("down_payment", 0) or 0)
+        has_employment_years = self._has_value(profile, "employment_years")
+        has_property_value = self._has_value(profile, "property_value")
+        has_requested_loan_amount = self._has_value(profile, "requested_loan_amount")
+        has_down_payment = self._has_value(profile, "down_payment")
 
         # ---- Pull thresholds from the rules file ----
         income_threshold = float(self.rules.get("income_threshold", 0))
@@ -33,8 +41,16 @@ class RuleEvaluator:
         # ---- Derived metrics ----
         monthly_income = annual_income / 12 if annual_income > 0 else 0
         dti_ratio = (monthly_debt / monthly_income) if monthly_income > 0 else 1.0
-        ltv_ratio = (requested_loan_amount / property_value) if property_value > 0 else 1.0
-        down_payment_percent = (down_payment / property_value) if property_value > 0 else 0.0
+        ltv_ratio = (
+            (requested_loan_amount / property_value)
+            if has_property_value and has_requested_loan_amount and property_value > 0
+            else None
+        )
+        down_payment_percent = (
+            (down_payment / property_value)
+            if has_property_value and has_down_payment and property_value > 0
+            else None
+        )
 
         rule_breakdown: list[dict[str, Any]] = []
 
@@ -103,53 +119,80 @@ class RuleEvaluator:
         })
 
         # 5. Employment Stability (years at job)
-        years_passed = employment_years >= min_employment_years
-        rule_breakdown.append({
-            "name": "Job Stability",
-            "passed": years_passed,
-            "value_display": f"{employment_years:.1f} years",
-            "threshold_display": f"minimum {min_employment_years:.0f} years required",
-            "explanation": (
-                f"You've been at your current job/business for {employment_years:.1f} years, showing stable "
-                f"income history (minimum required: {min_employment_years:.0f} years)."
-                if years_passed else
-                f"You've been at your current job/business for only {employment_years:.1f} years, which is "
-                f"below the {min_employment_years:.0f}-year stability lenders usually want to see."
-            ),
-        })
+        if has_employment_years:
+            years_passed = employment_years >= min_employment_years
+            rule_breakdown.append({
+                "name": "Job Stability",
+                "passed": years_passed,
+                "value_display": f"{employment_years:.1f} years",
+                "threshold_display": f"minimum {min_employment_years:.0f} years required",
+                "explanation": (
+                    f"You've been at your current job/business for {employment_years:.1f} years, showing stable "
+                    f"income history (minimum required: {min_employment_years:.0f} years)."
+                    if years_passed else
+                    f"You've been at your current job/business for only {employment_years:.1f} years, which is "
+                    f"below the {min_employment_years:.0f}-year stability lenders usually want to see."
+                ),
+            })
+        else:
+            rule_breakdown.append({
+                "name": "Job Stability",
+                "passed": True,
+                "value_display": "Not provided",
+                "threshold_display": f"minimum {min_employment_years:.0f} years required",
+                "explanation": "This check was not evaluated because job-stability information was not provided.",
+            })
 
         # 6. Loan-to-Value Ratio
-        ltv_passed = ltv_ratio <= max_ltv_ratio
-        rule_breakdown.append({
-            "name": "Loan-to-Value Ratio",
-            "passed": ltv_passed,
-            "value_display": f"{ltv_ratio * 100:.1f}%",
-            "threshold_display": f"must be {max_ltv_ratio * 100:.0f}% or lower",
-            "explanation": (
-                f"You're asking to borrow {ltv_ratio * 100:.1f}% of the property's value, which is within "
-                f"the {max_ltv_ratio * 100:.0f}% limit lenders allow."
-                if ltv_passed else
-                f"You're asking to borrow {ltv_ratio * 100:.1f}% of the property's value, which is more than "
-                f"the {max_ltv_ratio * 100:.0f}% limit. This means the loan is too large relative to the "
-                "property's worth."
-            ),
-        })
+        if ltv_ratio is not None:
+            ltv_passed = ltv_ratio <= max_ltv_ratio
+            rule_breakdown.append({
+                "name": "Loan-to-Value Ratio",
+                "passed": ltv_passed,
+                "value_display": f"{ltv_ratio * 100:.1f}%",
+                "threshold_display": f"must be {max_ltv_ratio * 100:.0f}% or lower",
+                "explanation": (
+                    f"You're asking to borrow {ltv_ratio * 100:.1f}% of the property's value, which is within "
+                    f"the {max_ltv_ratio * 100:.0f}% limit lenders allow."
+                    if ltv_passed else
+                    f"You're asking to borrow {ltv_ratio * 100:.1f}% of the property's value, which is more than "
+                    f"the {max_ltv_ratio * 100:.0f}% limit. This means the loan is too large relative to the "
+                    "property's worth."
+                ),
+            })
+        else:
+            rule_breakdown.append({
+                "name": "Loan-to-Value Ratio",
+                "passed": True,
+                "value_display": "Not provided",
+                "threshold_display": f"must be {max_ltv_ratio * 100:.0f}% or lower",
+                "explanation": "This check was not evaluated because the loan and property value were not provided.",
+            })
 
         # 7. Down Payment
-        down_passed = down_payment_percent >= min_down_payment_percent
-        rule_breakdown.append({
-            "name": "Down Payment",
-            "passed": down_passed,
-            "value_display": f"Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}%)",
-            "threshold_display": f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
-            "explanation": (
-                f"Your down payment of Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}% of the "
-                f"property value) meets the minimum requirement of {min_down_payment_percent * 100:.0f}%."
-                if down_passed else
-                f"Your down payment of Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}% of the "
-                f"property value) is below the minimum requirement of {min_down_payment_percent * 100:.0f}%."
-            ),
-        })
+        if down_payment_percent is not None:
+            down_passed = down_payment_percent >= min_down_payment_percent
+            rule_breakdown.append({
+                "name": "Down Payment",
+                "passed": down_passed,
+                "value_display": f"Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}%)",
+                "threshold_display": f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
+                "explanation": (
+                    f"Your down payment of Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}% of the "
+                    f"property value) meets the minimum requirement of {min_down_payment_percent * 100:.0f}%."
+                    if down_passed else
+                    f"Your down payment of Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}% of the "
+                    f"property value) is below the minimum requirement of {min_down_payment_percent * 100:.0f}%."
+                ),
+            })
+        else:
+            rule_breakdown.append({
+                "name": "Down Payment",
+                "passed": True,
+                "value_display": "Not provided",
+                "threshold_display": f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
+                "explanation": "This check was not evaluated because down-payment information was not provided.",
+            })
 
         failures = [rule["name"] for rule in rule_breakdown if not rule["passed"]]
         eligible = len(failures) == 0
@@ -176,7 +219,7 @@ class RuleEvaluator:
                 "requested_loan_amount": requested_loan_amount,
                 "down_payment": down_payment,
                 "dti_ratio": round(dti_ratio, 4),
-                "ltv_ratio": round(ltv_ratio, 4),
-                "down_payment_percent": round(down_payment_percent, 4),
+                "ltv_ratio": round(ltv_ratio, 4) if ltv_ratio is not None else None,
+                "down_payment_percent": round(down_payment_percent, 4) if down_payment_percent is not None else None,
             },
         }

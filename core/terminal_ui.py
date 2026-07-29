@@ -54,16 +54,14 @@ def print_session_info(session_id: str) -> None:
 # Interview turn
 # ---------------------------------------------------------------------------
 
-def print_question(question: str, field: str, total_fields: int) -> None:
-    order = list(FIELD_LABELS.keys())
-    index = order.index(field) + 1 if field in order else total_fields
+def print_agent_message(message: str, is_first_turn: bool = False) -> None:
     print()
-    print(Fore.MAGENTA + Style.BRIGHT + f"[Question {index} of {total_fields}]" + Style.RESET_ALL)
-    print(Fore.GREEN + Style.BRIGHT + "Interview Agent: " + Style.RESET_ALL + question)
+    label = Fore.GREEN + Style.BRIGHT + "CIAP: " + Style.RESET_ALL
+    print(label + message)
 
 
 def get_answer_prompt() -> str:
-    return input(Fore.CYAN + Style.BRIGHT + "Applicant: " + Style.RESET_ALL).strip()
+    return input(Fore.CYAN + Style.BRIGHT + "You: " + Style.RESET_ALL).strip()
 
 
 def print_error(message: str) -> None:

@@ -48,6 +48,25 @@ class OpenAIClientAdapter:
                 )
         return self._fallback_extract(latest_response, "OpenAI API error: unknown failure")
 
+    def generate_reply(self, system_prompt: str, messages: list[dict[str, str]]) -> str:
+        """
+        Free-form conversational reply (not JSON). Used by the InterviewAgent so the
+        interaction feels like a natural chat instead of a rigid form.
+        Falls back to a plain templated line if the API is unavailable.
+        """
+        if not self._client:
+            return ""
+        try:
+            response = self._client.chat.completions.create(
+                model=self.model_id,
+                max_tokens=200,
+                temperature=0.6,
+                messages=[{"role": "system", "content": system_prompt}, *messages],
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception:  # pragma: no cover
+            return ""
+
     def _fallback_extract(self, text: str, reason: str) -> str:
         # Identical logic to ClaudeClientAdapter's fallback — provider-agnostic,
         # kept in sync so degraded-mode behavior doesn't differ by adapter.
