@@ -10,6 +10,8 @@ Instructions:
 - Classify every failure as Critical, High, Medium, or Low.
 - Suggest practical fixes for business rule violations and validation gaps.
 - Produce a report suitable for engineering teams, QA teams, product managers, and stakeholders.
+- Use the latest pytest output and coverage report as the source of truth.
+- Include an executive summary, coverage analysis, defect summary, root cause analysis, risk assessment, recommendations, and conclusion.
 
 Report Structure:
 1. Executive Summary
@@ -18,11 +20,13 @@ Report Structure:
 4. Methodology
 5. Test Categories
 6. Execution Summary
-7. Boundary Value Analysis Results
-8. Defects Found
-9. Risk Analysis
-10. Recommendations
-11. Conclusion
+7. Coverage Analysis
+8. Boundary Value Analysis Results
+9. Defects Found
+10. Root Cause Analysis
+11. Risk Analysis
+12. Recommendations
+13. Conclusion
 
 Analysis Requirements:
 - Pass/fail summary
@@ -35,9 +39,12 @@ Analysis Requirements:
 - Performance insights
 - Coverage gaps
 - Risk assessment
+- Coverage percentage by major module
+- Total tests, passed, failed, skipped
 
 Output Requirements:
 - Use concise executive-level language.
 - Include a clear table for boundary test results.
 - Highlight any high-risk defects or untested areas.
 - Ensure the report is professional, structured, and ready for stakeholder review.
+- Mention whether the suite is production-ready and any remaining limitations.
