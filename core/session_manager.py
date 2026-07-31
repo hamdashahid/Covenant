@@ -20,7 +20,7 @@ class SessionManager:
         existing: dict[str, Any] | None = None
         if session_id:
             existing = self.store.get_session(session_id)
-            if existing and existing["session_state"] != "closed":
+            if existing:
                 profile, conflicts = self.store.get_profile(existing["session_id"])
                 history = self.store.get_messages(existing["session_id"])
                 turn_count = len([message for message in history if message.get("role") == "user"])
@@ -37,7 +37,7 @@ class SessionManager:
                 }
                 return existing["session_id"], existing["model_id"], state
 
-        new_session_id = str(uuid.uuid4()) if (session_id and existing) else (session_id or str(uuid.uuid4()))
+        new_session_id = session_id or str(uuid.uuid4())
         state = {
             "session_id": new_session_id,
             "model_id": resolved_model,
@@ -53,5 +53,13 @@ class SessionManager:
         return new_session_id, resolved_model, state
 
     def save_state(self, session_id: str, state: dict[str, Any], completed: bool = False) -> None:
-        del state
+        self.store.upsert_profile(
+            session_id=session_id,
+            profile=state.get("applicant_profile", {}),
+            conflicts=state.get("profile_conflicts", []),
+        )
+        self.store.replace_messages(
+            session_id=session_id,
+            messages=state.get("conversation_history", []),
+        )
         self.store.update_session_state(session_id, "closed" if completed else "in_progress")

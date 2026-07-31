@@ -126,7 +126,16 @@ class ExtractionValidationNode:
             latest_user_response=state.get("latest_user_response", ""),
             schema=self.extraction_schema,
         )
-        raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
+        try:
+            raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
+        except Exception as exc:  # pragma: no cover - defensive guard
+            raw = json.dumps(
+                {
+                    "fields": {},
+                    "confidence": 0.0,
+                    "issues": [f"LLM extraction failed: {exc}"],
+                }
+            )
         fields, confidence, parse_issues = self._parse_response(raw)
         validated_fields, validation_issues = self._coerce_and_validate(fields)
 

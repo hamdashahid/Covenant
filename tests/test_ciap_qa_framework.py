@@ -16,6 +16,11 @@ class TestFunctionalConversationFlow:
         assert state["applicant_profile"] == {}
 
         state["applicant_profile"] = dict(base_profile)
+        # turn_count is derived from how many user messages exist in history,
+        # so a realistic 8-turn conversation needs 8 matching user messages.
+        state["conversation_history"] = [
+            {"role": "user", "content": f"answer {i}"} for i in range(8)
+        ]
         state["turn_count"] = 8
         session_manager.save_state(session_id, state, completed=True)
 
