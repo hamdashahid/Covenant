@@ -61,7 +61,10 @@ def print_agent_message(message: str, is_first_turn: bool = False) -> None:
 
 
 def get_answer_prompt() -> str:
-    return input(Fore.CYAN + Style.BRIGHT + "You: " + Style.RESET_ALL).strip()
+    try:
+        return input(Fore.CYAN + Style.BRIGHT + "You: " + Style.RESET_ALL).strip()
+    except (EOFError, OSError, RuntimeError):
+        return ""
 
 
 def print_error(message: str) -> None:
