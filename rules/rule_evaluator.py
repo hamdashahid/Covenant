@@ -14,16 +14,52 @@ class RuleEvaluator:
     def _has_value(profile: dict[str, Any], key: str) -> bool:
         return key in profile and profile[key] not in (None, "")
 
+    @staticmethod
+    def _coerce_float(value: Any, default: float = 0.0) -> float:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return default
+            try:
+                return float(text.replace(",", ""))
+            except (TypeError, ValueError, OverflowError):
+                return default
+        return default
+
+    @staticmethod
+    def _coerce_int(value: Any, default: int = 0) -> int:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return default
+            try:
+                return int(text.replace(",", ""))
+            except (TypeError, ValueError, OverflowError):
+                return default
+        return default
+
     def evaluate(self, profile: dict[str, Any]) -> dict[str, Any]:
         # ---- Pull raw values from the applicant profile ----
-        annual_income = float(profile.get("annual_income", 0) or 0)
-        monthly_debt = float(profile.get("monthly_debt", 0) or 0)
-        credit_score = int(profile.get("credit_score", 0) or 0)
+        annual_income = self._coerce_float(profile.get("annual_income", 0))
+        monthly_debt = self._coerce_float(profile.get("monthly_debt", 0))
+        credit_score = self._coerce_int(profile.get("credit_score", 0))
         employment_status = str(profile.get("employment_status", "")).strip().lower()
-        employment_years = float(profile.get("employment_years", 0) or 0)
-        property_value = float(profile.get("property_value", 0) or 0)
-        requested_loan_amount = float(profile.get("requested_loan_amount", 0) or 0)
-        down_payment = float(profile.get("down_payment", 0) or 0)
+        employment_years = self._coerce_float(profile.get("employment_years", 0))
+        property_value = self._coerce_float(profile.get("property_value", 0))
+        requested_loan_amount = self._coerce_float(profile.get("requested_loan_amount", 0))
+        down_payment = self._coerce_float(profile.get("down_payment", 0))
         has_employment_years = self._has_value(profile, "employment_years")
         has_property_value = self._has_value(profile, "property_value")
         has_requested_loan_amount = self._has_value(profile, "requested_loan_amount")
