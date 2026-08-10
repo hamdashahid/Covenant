@@ -106,6 +106,10 @@ def print_final_result(status: str, summary: str, profile: dict[str, Any], repor
         color = Fore.RED
         headline = "NOT ELIGIBLE YET"
         icon = "❌"
+    elif status == "Stopped by User":
+        color = Fore.MAGENTA
+        headline = "CONVERSATION ENDED BY USER"
+        icon = "🛑"
     else:
         color = Fore.YELLOW
         headline = "MORE INFORMATION NEEDED"

@@ -29,7 +29,8 @@ class SQLiteStore:
                     model_id TEXT NOT NULL,
                     session_state TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    closed_at TEXT
+                    closed_at TEXT,
+                    tags TEXT
                 )
                 """
             )
@@ -61,38 +62,55 @@ class SQLiteStore:
                     session_id TEXT NOT NULL,
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
-                    message_timestamp TEXT NOT NULL
+                    message_timestamp TEXT NOT NULL,
+                    tags TEXT
                 )
                 """
             )
+            # Migration safety: ensure tags columns exist if upgrading an older DB
+            cur = conn.execute("PRAGMA table_info(sessions)").fetchall()
+            cols = [r[1] for r in cur]
+            if "tags" not in cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN tags TEXT")
+            cur = conn.execute("PRAGMA table_info(messages)").fetchall()
+            cols = [r[1] for r in cur]
+            if "tags" not in cols:
+                conn.execute("ALTER TABLE messages ADD COLUMN tags TEXT")
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT session_id, model_id, session_state, created_at, closed_at FROM sessions WHERE session_id = ?",
+                "SELECT session_id, model_id, session_state, created_at, closed_at, tags FROM sessions WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
         if not row:
             return None
+        tags = None
+        try:
+            tags = json.loads(row["tags"]) if row["tags"] else None
+        except Exception:
+            tags = None
         return {
             "session_id": row["session_id"],
             "model_id": row["model_id"],
             "session_state": row["session_state"],
             "created_at": row["created_at"],
             "closed_at": row["closed_at"],
+            "tags": tags,
         }
 
-    def create_session(self, session_id: str, model_id: str) -> None:
+    def create_session(self, session_id: str, model_id: str, tags: list[str] | None = None) -> None:
         now = _utc_now()
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO sessions (session_id, model_id, session_state, created_at, closed_at)
-                VALUES (?, ?, ?, ?, NULL)
+                INSERT INTO sessions (session_id, model_id, session_state, created_at, closed_at, tags)
+                VALUES (?, ?, ?, ?, NULL, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
-                    model_id=excluded.model_id
+                    model_id=excluded.model_id,
+                    tags=COALESCE(excluded.tags, sessions.tags)
                 """,
-                (session_id, model_id, "in_progress", now),
+                (session_id, model_id, "in_progress", now, json.dumps(tags) if tags is not None else None),
             )
 
     def update_session_state(self, session_id: str, session_state: str) -> None:
@@ -153,8 +171,8 @@ class SQLiteStore:
             )
             conn.executemany(
                 """
-                INSERT INTO messages (session_id, role, content, message_timestamp)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO messages (session_id, role, content, message_timestamp, tags)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -162,6 +180,7 @@ class SQLiteStore:
                         str(message.get("role", "user")),
                         str(message.get("content", "")),
                         now,
+                        json.dumps(message.get("tags")) if message.get("tags") is not None else None,
                     )
                     for message in messages
                 ],
@@ -171,14 +190,22 @@ class SQLiteStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT role, content
+                SELECT role, content, tags
                 FROM messages
                 WHERE session_id = ?
                 ORDER BY message_id ASC
                 """,
                 (session_id,),
             ).fetchall()
-        return [{"role": row["role"], "content": row["content"]} for row in rows]
+        out: list[dict[str, str]] = []
+        for row in rows:
+            tags = None
+            try:
+                tags = json.loads(row["tags"]) if row["tags"] else None
+            except Exception:
+                tags = None
+            out.append({"role": row["role"], "content": row["content"], "tags": tags})
+        return out
 
     def close_session(self, session_id: str, report: dict[str, Any]) -> None:
         now = _utc_now()
