@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any
 
 from core import terminal_ui
 from core.schemas import FIELD_LABELS
+
+logger = logging.getLogger(__name__)
 
 
 class InterviewAgent:
@@ -19,10 +23,21 @@ class InterviewAgent:
         interview_policy: list[dict[str, str]],
         system_prompt: str,
         llm_client: Any = None,
+        greeting_text: str | None = None,
     ) -> None:
         self.interview_policy = interview_policy
         self.system_prompt = system_prompt.strip()
         self.llm_client = llm_client
+        self.greeting_text = (greeting_text or "").strip()
+        self.STOP_COMMANDS = {"stop", "end", "/stop", "/end"}
+        self.AFFIRMATIVE = {"yes", "y", "sure", "ok", "okay", "please"}
+        self.NEGATIVE = {"no", "n", "not now", "nope"}
+        self.FINALIZE_PATTERNS = [
+            re.compile(
+                r"^no(?:\s*(?:,?\s*(?:that'?s\s+all(?:\s+the\s+information\s+i\s+have)?|that\s+is\s+all(?:\s+the\s+information\s+i\s+have)?|all\s+i\s+have|that's\s+all|that\s+is\s+all|thanks?|thank\s+you|not\s+right\s+now|that's\s+it|that\s+is\s+it))?)?\s*[.!?]*$",
+                re.IGNORECASE,
+            ),
+        ]
 
     def _missing_fields(self, state: dict[str, Any]) -> tuple[list[str], str | None]:
         profile = state.get("applicant_profile", {})
@@ -86,6 +101,46 @@ class InterviewAgent:
         history = list(state.get("conversation_history", []))
         is_first_turn = not any(m.get("role") == "assistant" for m in history)
 
+        # If the decision agent has already offered early termination, confirm it before asking
+        # another generic followup question. This keeps the UX stable when multiple fields were
+        # provided in one turn and a likely conclusion is already available.
+        if state.get("offer_early_termination") and not state.get("early_offered_already"):
+            confirm_q = (
+                "I can already reach a likely conclusion based on what you've provided. "
+                "Would you like me to finalize now? (yes/no)"
+            )
+            terminal_ui.print_agent_message(confirm_q, is_first_turn=is_first_turn)
+            confirm_resp = terminal_ui.get_answer_prompt().strip()
+            terminal_ui.print_thinking()
+
+            if not history and self.system_prompt:
+                history.append({"role": "system", "content": self.system_prompt})
+            history.append({"role": "assistant", "content": confirm_q})
+            history.append({"role": "user", "content": confirm_resp})
+
+            state["conversation_history"] = history
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["early_offered_already"] = True
+            state["current_question"] = confirm_q
+            state["latest_user_response"] = confirm_resp
+
+            is_confirm_finalize = any(pattern.match(confirm_resp.strip()) for pattern in self.FINALIZE_PATTERNS)
+            resp_clean = (confirm_resp or "").strip().lower()
+            if is_confirm_finalize:
+                state["user_requested_finalize"] = True
+                state["needs_followup"] = False
+                state["followup_field"] = None
+                state["offer_early_termination"] = False
+                return state
+            if resp_clean in self.AFFIRMATIVE:
+                state["user_confirmed_early_end"] = True
+                state["needs_followup"] = False
+            else:
+                state["offer_early_termination"] = False
+                state["user_confirmed_early_end"] = False
+
+            return state
+
         question = self._generate_conversational_question(state, missing, followup_field, is_first_turn)
         if not question:
             base = self._static_question(target_field)
@@ -93,10 +148,101 @@ class InterviewAgent:
                 f"Hi! I'm here to help figure out your mortgage eligibility. {base}"
                 if is_first_turn else base
             )
+        # Prepend configured greeting on the very first assistant turn if provided
+        if is_first_turn and self.greeting_text:
+            # avoid duplicating if the LLM already included a greeting
+            if not question.lower().startswith(self.greeting_text.lower()):
+                question = f"{self.greeting_text} {question}"
 
         terminal_ui.print_agent_message(question, is_first_turn=is_first_turn)
         user_response = terminal_ui.get_answer_prompt()
         terminal_ui.print_thinking()
+
+        cleaned = (user_response or "").strip().lower()
+        is_stop_command = cleaned in self.STOP_COMMANDS
+        is_finalize_phrase = any(pattern.match(user_response.strip()) for pattern in self.FINALIZE_PATTERNS)
+        logger.debug(
+            "User response=%r cleaned=%r is_stop=%s is_finalize=%s",
+            user_response,
+            cleaned,
+            is_stop_command,
+            is_finalize_phrase,
+        )
+
+        # ----- Stop command detection (user-initiated end) -----
+        if is_stop_command:
+            # record final user message and mark session stopped
+            if not history and self.system_prompt:
+                history.append({"role": "system", "content": self.system_prompt})
+            history.append({"role": "assistant", "content": question})
+            history.append({"role": "user", "content": user_response})
+
+            state["conversation_history"] = history
+            state["current_question"] = question
+            state["latest_user_response"] = user_response
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["user_requested_stop"] = True
+            state["needs_followup"] = False
+            state["followup_field"] = None
+            state["decision_status"] = "Stopped by User"
+            state["decision_summary"] = "User ended the conversation."
+            state["final_report"] = {
+                "status": "Stopped by User",
+                "summary": "User ended the conversation.",
+                "stopped_by_user": True,
+            }
+            return state
+
+        # ----- User finalize-at-current-state handling -----
+        if is_finalize_phrase:
+            if not history and self.system_prompt:
+                history.append({"role": "system", "content": self.system_prompt})
+            history.append({"role": "assistant", "content": question})
+            history.append({"role": "user", "content": user_response})
+
+            state["conversation_history"] = history
+            state["current_question"] = question
+            state["current_question_field"] = target_field or "general"
+            state["latest_user_response"] = user_response
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["user_requested_finalize"] = True
+            state["needs_followup"] = False
+            state["followup_field"] = None
+            state["decision_status"] = "Requires More Info"
+            state["decision_summary"] = "User indicated no more information is available."
+            return state
+
+        # ----- Early-termination confirmation handling -----
+        # If the decision agent offered early termination, ask for confirmation.
+        if state.get("offer_early_termination") and not state.get("early_offered_already"):
+            # ask a short confirmation instead of the usual followup
+            confirm_q = (
+                "I can already reach a likely conclusion based on what you've provided. "
+                "Would you like me to finalize now? (yes/no)"
+            )
+            terminal_ui.print_agent_message(confirm_q)
+            confirm_resp = terminal_ui.get_answer_prompt().strip()
+            terminal_ui.print_thinking()
+            # append assistant prompt and user response
+            if not history and self.system_prompt:
+                history.append({"role": "system", "content": self.system_prompt})
+            history.append({"role": "assistant", "content": confirm_q})
+            history.append({"role": "user", "content": confirm_resp})
+
+            state["conversation_history"] = history
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["early_offered_already"] = True
+
+            resp_clean = (confirm_resp or "").strip().lower()
+            if resp_clean in self.AFFIRMATIVE:
+                state["user_confirmed_early_end"] = True
+                state["needs_followup"] = False
+            else:
+                # user declined early termination; continue normal flow
+                state["offer_early_termination"] = False
+                state["user_confirmed_early_end"] = False
+
+            return state
 
         if not history and self.system_prompt:
             history.append({"role": "system", "content": self.system_prompt})
