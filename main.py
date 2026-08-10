@@ -15,6 +15,7 @@ from graph.ciap_graph import build_ciap_graph
 from llm.openai_adapter import OpenAIClientAdapter
 from persistence.sqlite_store import SQLiteStore
 from rules.rule_evaluator import RuleEvaluator
+import os
 
 try:
     from dotenv import load_dotenv
@@ -68,6 +69,16 @@ def _load_system_prompt(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
+def _load_greeting(path: Path) -> str:
+    # Env var takes precedence
+    env = os.getenv("CIAP_GREETING")
+    if env:
+        return env.strip()
+    if path.exists():
+        return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="CIAP: Conversational Interview & Assessment Platform")
     parser.add_argument("--session-id", default=None, help="Existing session ID to resume")
@@ -82,7 +93,13 @@ def main() -> None:
     terminal_ui.print_session_info(session_id)
 
     llm_client = OpenAIClientAdapter(model_id=model_id)
-    interview_agent = InterviewAgent(DEFAULT_POLICY, _load_system_prompt(SYSTEM_PROMPT_PATH), llm_client=llm_client)
+    greeting = _load_greeting(Path("config") / "greeting.txt")
+    interview_agent = InterviewAgent(
+        DEFAULT_POLICY,
+        _load_system_prompt(SYSTEM_PROMPT_PATH),
+        llm_client=llm_client,
+        greeting_text=greeting,
+    )
     extraction_node = ExtractionValidationNode(
         llm_client=llm_client,
         context_builder=ContextBuilder(),
@@ -92,6 +109,16 @@ def main() -> None:
     decision_agent = DecisionAgent(
         rule_evaluator=RuleEvaluator(str(Path("rules") / "eligibility_rules.yaml"))
     )
+    # Configure early termination thresholds from environment (defaults if unset)
+    try:
+        offer = float(os.getenv("EARLY_OFFER_PASS_RATIO", "0.85"))
+    except Exception:
+        offer = 0.85
+    try:
+        auto = float(os.getenv("EARLY_AUTO_PASS_RATIO", "1.0"))
+    except Exception:
+        auto = 1.0
+    decision_agent.set_early_termination_thresholds(offer, auto)
 
     def on_turn_complete(updated_state: dict) -> None:
         store.upsert_profile(

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import logging
+import logging
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+
+logger = logging.getLogger(__name__)
+
+logger = logging.getLogger(__name__)
 
 
 class CIAPState(TypedDict, total=False):
@@ -22,6 +28,13 @@ class CIAPState(TypedDict, total=False):
     decision_summary: str
     final_report: dict[str, Any]
     last_extraction: dict[str, Any]
+    user_requested_stop: bool
+    user_requested_finalize: bool
+    offer_early_termination: bool
+    user_confirmed_early_end: bool
+    early_offered_already: bool
+    auto_terminated: bool
+    early_termination_pass_ratio: float
 
 
 def build_ciap_graph(
@@ -34,15 +47,36 @@ def build_ciap_graph(
     graph = StateGraph(CIAPState)
 
     def interview_node(state: dict[str, Any]) -> dict[str, Any]:
-        return interview_agent(state)
+        updated = interview_agent(state)
+        logger.debug("Interview node result: user_requested_stop=%s user_requested_finalize=%s needs_followup=%s latest=%r",
+            updated.get("user_requested_stop"), updated.get("user_requested_finalize"), updated.get("needs_followup"), updated.get("latest_user_response"))
+        return updated
 
     def extraction_node(state: dict[str, Any]) -> dict[str, Any]:
+        # If the user explicitly requested to stop, or their latest raw response is a stop command,
+        # skip extraction and persist then return. This makes stop detection robust even if the
+        # InterviewAgent didn't set the flag for some execution paths.
+        latest = str(state.get("latest_user_response", "")).strip().lower()
+        stop_cmds = {"stop", "end", "/stop", "/end"}
+        if state.get("user_requested_stop") or latest in stop_cmds:
+            logger.debug("Skipping extraction: stop detected latest=%r user_requested_stop=%s", latest, state.get("user_requested_stop"))
+            on_turn_complete(state)
+            return state
         updated = extraction_validation_node(state)
+        logger.debug("Extraction node result: needs_followup=%s current_question_field=%r", updated.get("needs_followup"), updated.get("current_question_field"))
         on_turn_complete(updated)
         return updated
 
     def decision_node(state: dict[str, Any]) -> dict[str, Any]:
+        latest = str(state.get("latest_user_response", "")).strip().lower()
+        stop_cmds = {"stop", "end", "/stop", "/end"}
+        if state.get("user_requested_stop") or latest in stop_cmds:
+            logger.debug("Skipping decision: stop detected latest=%r user_requested_stop=%s", latest, state.get("user_requested_stop"))
+            on_completed(state)
+            return state
+
         updated = decision_agent(state)
+        logger.debug("Decision node result: needs_followup=%s decision_status=%r", updated.get("needs_followup"), updated.get("decision_status"))
         if not updated.get("needs_followup", False):
             on_completed(updated)
         return updated
