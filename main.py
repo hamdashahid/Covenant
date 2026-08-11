@@ -127,6 +127,9 @@ def main() -> None:
             conflicts=updated_state.get("profile_conflicts", []),
         )
         store.replace_messages(session_id=session_id, messages=updated_state.get("conversation_history", []))
+        tags = updated_state.get("session_tags") or []
+        if tags:
+            store.merge_session_tags(session_id, tags)
         fallback_issues = [
             issue
             for issue in updated_state.get("last_extraction", {}).get("issues", [])
@@ -138,6 +141,9 @@ def main() -> None:
 
     def on_completed(updated_state: dict) -> None:
         report = updated_state.get("final_report", {})
+        tags = updated_state.get("session_tags") or []
+        if tags:
+            store.merge_session_tags(session_id, tags)
         store.close_session(session_id=session_id, report=report)
         session_manager.save_state(session_id, updated_state, completed=True)
 
