@@ -50,6 +50,28 @@ def print_session_info(session_id: str) -> None:
     )
 
 
+def print_sessions_by_tag(sessions: list[dict[str, Any]]) -> None:
+    width = _width()
+    print()
+    print(Fore.CYAN + Style.BRIGHT + "=" * width)
+    print(Fore.CYAN + Style.BRIGHT + "Conversations by Tag".center(width))
+    print(Fore.CYAN + Style.BRIGHT + "=" * width + Style.RESET_ALL)
+    if not sessions:
+        print(Fore.YELLOW + "No sessions were found." + Style.RESET_ALL)
+        return
+    for session in sessions:
+        tags = session.get("tags") or []
+        tag_text = ", ".join(tags) if tags else "none"
+        print(
+            Fore.WHITE
+            + f"{session['session_id']} [{session['session_state']}] "
+            + Fore.YELLOW
+            + f"tags: {tag_text}"
+            + Style.RESET_ALL
+        )
+    print(Fore.CYAN + Style.BRIGHT + "=" * width + Style.RESET_ALL)
+
+
 # ---------------------------------------------------------------------------
 # Interview turn
 # ---------------------------------------------------------------------------
