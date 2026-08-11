@@ -35,6 +35,13 @@ class CIAPState(TypedDict, total=False):
     early_offered_already: bool
     auto_terminated: bool
     early_termination_pass_ratio: float
+    skip_extraction: bool
+    greeting_detected: bool
+    lead_step: str
+    summary: str
+    qualification_category: str
+    conversation_status: str
+    session_tags: list[str]
 
 
 def build_ciap_graph(
@@ -53,13 +60,16 @@ def build_ciap_graph(
         return updated
 
     def extraction_node(state: dict[str, Any]) -> dict[str, Any]:
-        # If the user explicitly requested to stop, or their latest raw response is a stop command,
-        # skip extraction and persist then return. This makes stop detection robust even if the
-        # InterviewAgent didn't set the flag for some execution paths.
         latest = str(state.get("latest_user_response", "")).strip().lower()
         stop_cmds = {"stop", "end", "/stop", "/end"}
-        if state.get("user_requested_stop") or latest in stop_cmds:
-            logger.debug("Skipping extraction: stop detected latest=%r user_requested_stop=%s", latest, state.get("user_requested_stop"))
+        skip_extraction = bool(state.get("skip_extraction")) or state.get("user_requested_stop") or latest in stop_cmds
+        if skip_extraction:
+            logger.debug(
+                "Skipping extraction: stop detected latest=%r user_requested_stop=%s skip_extraction=%s",
+                latest,
+                state.get("user_requested_stop"),
+                state.get("skip_extraction"),
+            )
             on_turn_complete(state)
             return state
         updated = extraction_validation_node(state)

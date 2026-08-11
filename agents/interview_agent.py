@@ -54,6 +54,44 @@ class InterviewAgent:
                 return item["question"]
         return "Is there anything else you'd like to add about your situation?"
 
+    def _detect_greeting(self, text: str | None) -> bool:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return False
+        lowered = cleaned.lower()
+        if any(token in lowered for token in ["income", "credit", "debt", "loan", "property", "job", "employment", "score"]):
+            return False
+        return any(
+            lowered in {"hi", "hello", "hey", "hi there", "hey there", "hello there"}
+            or lowered.startswith(token)
+            for token in ["hi ", "hello ", "hey ", "good morning", "good afternoon", "good evening"]
+        )
+
+    def _detect_stop_intent(self, text: str | None) -> bool:
+        cleaned = (text or "").strip().lower()
+        if not cleaned:
+            return False
+        if cleaned in self.STOP_COMMANDS:
+            return True
+        stop_phrases = [
+            "i don't want to continue",
+            "i do not want to continue",
+            "i don't want to answer anymore",
+            "i do not want to answer anymore",
+            "please stop",
+            "don't contact me anymore",
+            "do not contact me anymore",
+            "leave me alone",
+            "i'm not interested anymore",
+            "i am not interested anymore",
+            "i don't want to continue this conversation",
+            "i do not want to continue this conversation",
+            "no longer interested",
+            "stop contacting me",
+            "end this conversation",
+        ]
+        return any(phrase in cleaned for phrase in stop_phrases)
+
     def _generate_conversational_question(
         self,
         state: dict[str, Any],
@@ -159,14 +197,16 @@ class InterviewAgent:
         terminal_ui.print_thinking()
 
         cleaned = (user_response or "").strip().lower()
-        is_stop_command = cleaned in self.STOP_COMMANDS
+        is_stop_command = self._detect_stop_intent(user_response)
         is_finalize_phrase = any(pattern.match(user_response.strip()) for pattern in self.FINALIZE_PATTERNS)
+        is_greeting = self._detect_greeting(user_response)
         logger.debug(
-            "User response=%r cleaned=%r is_stop=%s is_finalize=%s",
+            "User response=%r cleaned=%r is_stop=%s is_finalize=%s is_greeting=%s",
             user_response,
             cleaned,
             is_stop_command,
             is_finalize_phrase,
+            is_greeting,
         )
 
         # ----- Stop command detection (user-initiated end) -----
@@ -182,15 +222,43 @@ class InterviewAgent:
             state["latest_user_response"] = user_response
             state["turn_count"] = int(state.get("turn_count", 0)) + 1
             state["user_requested_stop"] = True
+            state["skip_extraction"] = True
             state["needs_followup"] = False
             state["followup_field"] = None
             state["decision_status"] = "Stopped by User"
             state["decision_summary"] = "User ended the conversation."
+            state["lead_step"] = "stop"
+            state["summary"] = "User ended the conversation."
+            state["qualification_category"] = "stopped"
+            state["conversation_status"] = "stopped"
+            state["session_tags"] = ["ciap-stopped"]
             state["final_report"] = {
                 "status": "Stopped by User",
                 "summary": "User ended the conversation.",
                 "stopped_by_user": True,
             }
+            return state
+
+        if is_greeting:
+            if not history and self.system_prompt:
+                history.append({"role": "system", "content": self.system_prompt})
+            history.append({"role": "assistant", "content": question})
+            history.append({"role": "user", "content": user_response})
+
+            state["conversation_history"] = history
+            state["current_question"] = question
+            state["current_question_field"] = target_field or "general"
+            state["latest_user_response"] = user_response
+            state["conversation_history"] = history
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["greeting_detected"] = True
+            state["skip_extraction"] = True
+            state["needs_followup"] = True
+            state["followup_field"] = target_field
+            state["lead_step"] = "greeting"
+            state["summary"] = "User greeted the assistant."
+            state["qualification_category"] = state.get("qualification_category") or "in_progress"
+            state["conversation_status"] = "in_progress"
             return state
 
         # ----- User finalize-at-current-state handling -----

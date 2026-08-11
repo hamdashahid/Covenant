@@ -113,6 +113,24 @@ class SQLiteStore:
                 (session_id, model_id, "in_progress", now, json.dumps(tags) if tags is not None else None),
             )
 
+    def merge_session_tags(self, session_id: str, tags: list[str] | None) -> None:
+        if not tags:
+            return
+        existing = self.get_session(session_id)
+        existing_tags = existing.get("tags") if existing else []
+        if not isinstance(existing_tags, list):
+            existing_tags = []
+        merged: list[str] = []
+        for tag in [*existing_tags, *tags]:
+            value = str(tag).strip()
+            if value and value not in merged:
+                merged.append(value)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET tags = ? WHERE session_id = ?",
+                (json.dumps(merged), session_id),
+            )
+
     def update_session_state(self, session_id: str, session_state: str) -> None:
         with self._connect() as conn:
             conn.execute(
