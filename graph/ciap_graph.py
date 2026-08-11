@@ -42,6 +42,7 @@ class CIAPState(TypedDict, total=False):
     qualification_category: str
     conversation_status: str
     session_tags: list[str]
+    conversation_tag: str | None
 
 
 def build_ciap_graph(

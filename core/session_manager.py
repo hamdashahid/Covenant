@@ -34,6 +34,7 @@ class SessionManager:
                     "max_turns": 16,
                     "decision_status": "Requires More Info",
                     "decision_summary": "",
+                    "conversation_tag": existing.get("conversation_tag"),
                 }
                 return existing["session_id"], existing["model_id"], state
 
@@ -48,6 +49,7 @@ class SessionManager:
             "max_turns": 16,
             "decision_status": "Requires More Info",
             "decision_summary": "",
+            "conversation_tag": None,
         }
         self.store.create_session(new_session_id, resolved_model)
         return new_session_id, resolved_model, state

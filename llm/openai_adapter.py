@@ -97,3 +97,5 @@ class OpenAIClientAdapter:
                 "issues": [f"Fallback extraction used: {reason}"],
             }
         )
+        
+        
