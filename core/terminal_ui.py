@@ -95,6 +95,28 @@ def print_summary(profile: dict[str, Any]) -> None:
 # Final decision — the big, layman-friendly, visually rich report
 # ---------------------------------------------------------------------------
 
+def print_tag_view(store: Any) -> None:
+    width = _width()
+    tags = store.get_available_tags()
+    print()
+    print(Fore.CYAN + Style.BRIGHT + "=" * width)
+    print(Fore.CYAN + Style.BRIGHT + "Conversations by Tag".center(width))
+    print(Fore.CYAN + Style.BRIGHT + "=" * width + Style.RESET_ALL)
+    if not tags:
+        print(Fore.YELLOW + "No final tags have been assigned yet." + Style.RESET_ALL)
+        return
+    for tag in tags:
+        print()
+        print(Fore.MAGENTA + Style.BRIGHT + tag + Style.RESET_ALL)
+        conversations = store.get_conversations_by_tag(tag)
+        if not conversations:
+            print("  (none)")
+            continue
+        for conversation in conversations:
+            status = conversation.get("closed_at") and "closed" or "open"
+            print(f"  - {conversation['session_id']} [{status}]")
+
+
 def print_final_result(status: str, summary: str, profile: dict[str, Any], report: dict[str, Any] | None = None) -> None:
     width = _width()
 

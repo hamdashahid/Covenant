@@ -84,6 +84,29 @@ class DecisionAgent:
             return ["ciap-follow-up"]
         return []
 
+    def _derive_conversation_tag(self, report: dict[str, Any], state: dict[str, Any]) -> str | None:
+        if state.get("user_requested_stop"):
+            return "Stopped"
+        if report.get("status") == "Eligible":
+            return "Qualified - Ready"
+        if report.get("status") == "Ineligible":
+            breakdown = report.get("rule_breakdown", []) or []
+            names = {str(rule.get("name", "")).lower() for rule in breakdown}
+            if "annual income" in names and "credit score" in names:
+                return "Unqualified - Low Income and Low Credit"
+            if "annual income" in names:
+                return "Unqualified - Low Income"
+            if "credit score" in names:
+                return "Unqualified - Low Credit"
+            if "debt-to-income ratio" in names:
+                return "Unqualified - High Debt"
+            if "loan-to-value ratio" in names:
+                return "Unqualified - High Loan-to-Value"
+            return "Unqualified - Needs Review"
+        if report.get("status") == "Requires More Info":
+            return "Needs More Info"
+        return None
+
     def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         profile = state.get("applicant_profile", {})
         missing = [field for field in REQUIRED_FIELDS if field not in profile]
@@ -108,6 +131,7 @@ class DecisionAgent:
                 state["offer_early_termination"] = False
                 state["auto_terminated"] = False
                 state["session_tags"] = self._derive_session_tags(state["final_report"], state)
+                state["conversation_tag"] = self._derive_conversation_tag(state["final_report"], state)
                 return state
 
             report = self.rule_evaluator.evaluate(profile)
@@ -123,6 +147,7 @@ class DecisionAgent:
             state["offer_early_termination"] = False
             state["auto_terminated"] = False
             state["session_tags"] = self._derive_session_tags(report, state)
+            state["conversation_tag"] = self._derive_conversation_tag(report, state)
             return state
 
         deterministic_report = self._deterministic_early_report(profile)
@@ -139,6 +164,7 @@ class DecisionAgent:
             state["offer_early_termination"] = False
             state["auto_terminated"] = True
             state["session_tags"] = self._derive_session_tags(deterministic_report, state)
+            state["conversation_tag"] = self._derive_conversation_tag(deterministic_report, state)
             return state
 
         if missing and turn_count < max_turns:
@@ -151,6 +177,10 @@ class DecisionAgent:
             state["qualification_category"] = "requires_more_info"
             state["conversation_status"] = "in_progress"
             state["session_tags"] = []
+            state["conversation_tag"] = self._derive_conversation_tag(
+                {"status": "Requires More Info", "summary": state["decision_summary"]},
+                state,
+            )
             return state
 
         if missing and turn_count >= max_turns:
@@ -170,6 +200,7 @@ class DecisionAgent:
                 "missing_fields": missing,
             }
             state["session_tags"] = self._derive_session_tags(state["final_report"], state)
+            state["conversation_tag"] = self._derive_conversation_tag(state["final_report"], state)
             return state
 
         report = self.rule_evaluator.evaluate(profile)
@@ -211,4 +242,5 @@ class DecisionAgent:
             state["offer_early_termination"] = False
             state["auto_terminated"] = False
         state["session_tags"] = self._derive_session_tags(report, state)
+        state["conversation_tag"] = self._derive_conversation_tag(report, state)
         return state

@@ -361,3 +361,39 @@ def test_merge_session_tags_is_idempotent(tmp_path):
 
     session = store.get_session(session_id)
     assert session["tags"] == ["ciap-ready", "existing", "new-tag"]
+
+
+def test_decision_agent_assigns_single_final_tag():
+    class FakeEvaluator:
+        def __init__(self):
+            self.rules = {"income_threshold": 100000, "min_credit_score": 640}
+
+        def evaluate(self, profile):
+            return {
+                "status": "Ineligible",
+                "summary": "Income is too low",
+                "rule_breakdown": [],
+            }
+
+    decision_agent = DecisionAgent(rule_evaluator=FakeEvaluator())
+    updated = decision_agent({
+        "applicant_profile": {"annual_income": 50000, "credit_score": 600},
+        "max_turns": 8,
+        "turn_count": 0,
+    })
+
+    assert updated.get("conversation_tag") == "Unqualified - Low Income and Low Credit"
+
+
+def test_sqlite_store_conversation_tag_persistence_and_grouping(tmp_path):
+    db_file = tmp_path / "test_tag_groups.db"
+    store = SQLiteStore(db_path=str(db_file))
+    session_id = "sess-tag-group"
+    store.create_session(session_id, "model-x")
+    store.set_conversation_tag(session_id, "Qualified - Ready")
+
+    session = store.get_session(session_id)
+    assert session["conversation_tag"] == "Qualified - Ready"
+    assert store.get_available_tags() == ["Qualified - Ready"]
+    grouped = store.get_conversations_by_tag("Qualified - Ready")
+    assert grouped[0]["session_id"] == session_id
