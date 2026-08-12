@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import io
 import os
 import tempfile
+from contextlib import redirect_stdout
 
 from persistence.sqlite_store import SQLiteStore
 from agents.interview_agent import InterviewAgent
 from agents.decision_agent import DecisionAgent
+from core import terminal_ui
 from graph.ciap_graph import build_ciap_graph
 
 
@@ -23,6 +26,49 @@ def test_replace_and_get_messages_with_tags(tmp_path):
     assert len(got) == 2
     assert got[0]["tags"] == ["greeting"]
     assert "income" in got[1]["tags"]
+
+
+def test_close_session_persists_conversation_tags(tmp_path):
+    db_file = tmp_path / "test_core.db"
+    store = SQLiteStore(db_path=str(db_file))
+    session_id = "sess-tags-2"
+    store.create_session(session_id, "model-x")
+    store.close_session(session_id, {"status": "Ineligible", "summary": "Failed", "failed_rules": ["Annual Income"]}, tags=["ciap-follow-up", "Unqualified - Low Income"])
+
+    session = store.get_session(session_id)
+    assert session is not None
+    assert session["tags"] == ["ciap-follow-up", "Unqualified - Low Income"]
+
+
+def test_get_sessions_with_tags_returns_recent_sessions(tmp_path):
+    db_file = tmp_path / "test_core.db"
+    store = SQLiteStore(db_path=str(db_file))
+    store.create_session("older", "model-x")
+    store.close_session("older", {"status": "Ineligible", "summary": "No"}, tags=["ciap-follow-up"])
+
+    store.create_session("recent", "model-x")
+    store.close_session("recent", {"status": "Eligible", "summary": "All good"}, tags=["ciap-ready"])
+
+    sessions = store.get_sessions_with_tags()
+    assert sessions[0]["session_id"] == "recent"
+    assert sessions[0]["tags"] == ["ciap-ready"]
+    assert sessions[1]["tags"] == ["ciap-follow-up"]
+
+
+def test_print_sessions_by_tag_displays_tags():
+    output = io.StringIO()
+    sessions = [
+        {"session_id": "s1", "session_state": "closed", "tags": ["ciap-ready"]},
+        {"session_id": "s2", "session_state": "in_progress", "tags": ["ciap-follow-up"]},
+    ]
+    with redirect_stdout(output):
+        terminal_ui.print_sessions_by_tag(sessions)
+
+    printed = output.getvalue()
+    assert "Conversations by Tag" in printed
+    assert "s1" in printed
+    assert "ciap-ready" in printed
+    assert "ciap-follow-up" in printed
 
 
 def test_interview_agent_stop_and_greeting(monkeypatch):

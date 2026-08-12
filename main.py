@@ -83,12 +83,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="CIAP: Conversational Interview & Assessment Platform")
     parser.add_argument("--session-id", default=None, help="Existing session ID to resume")
     parser.add_argument("--db-path", default="core.db", help="SQLite database path")
-    parser.add_argument("--list-tags", action="store_true", help="List all conversations grouped by their final tag")
+    parser.add_argument(
+        "--list-tags",
+        action="store_true",
+        help="List recent sessions and their persisted conversation tags",
+    )
     args = parser.parse_args()
 
     store = SQLiteStore(db_path=args.db_path)
-    if args.list_tags:
-        terminal_ui.print_tag_view(store)
+    if getattr(args, "list_tags", False):
+        terminal_ui.print_sessions_by_tag(store.get_sessions_with_tags())
         return
 
     session_manager = SessionManager(store=store, default_model_id=MODEL_ID)
@@ -132,9 +136,6 @@ def main() -> None:
             conflicts=updated_state.get("profile_conflicts", []),
         )
         store.replace_messages(session_id=session_id, messages=updated_state.get("conversation_history", []))
-        tags = updated_state.get("session_tags") or []
-        if tags:
-            store.merge_session_tags(session_id, tags)
         fallback_issues = [
             issue
             for issue in updated_state.get("last_extraction", {}).get("issues", [])
@@ -146,13 +147,17 @@ def main() -> None:
 
     def on_completed(updated_state: dict) -> None:
         report = updated_state.get("final_report", {})
-        tags = updated_state.get("session_tags") or []
-        if tags:
-            store.merge_session_tags(session_id, tags)
-        conversation_tag = updated_state.get("conversation_tag")
-        if conversation_tag:
-            store.set_conversation_tag(session_id, conversation_tag)
-        store.close_session(session_id=session_id, report=report)
+        final_tags = []
+        if updated_state.get("conversation_tag"):
+            final_tags.append(str(updated_state["conversation_tag"]))
+        if updated_state.get("session_tags"):
+            final_tags.extend([str(tag) for tag in updated_state["session_tags"] if tag not in final_tags])
+        if not final_tags and updated_state.get("decision_status") == "Stopped by User":
+            final_tags.append("Stopped")
+        try:
+            store.close_session(session_id=session_id, report=report, tags=final_tags or None)
+        except TypeError:
+            store.close_session(session_id=session_id, report=report)
         session_manager.save_state(session_id, updated_state, completed=True)
 
     graph = build_ciap_graph(
@@ -170,7 +175,7 @@ def main() -> None:
         profile=final_state.get("applicant_profile", {}),
         report=final_state.get("final_report", {}),
     )
-# commit
+
 
 if __name__ == "__main__":
     main()
