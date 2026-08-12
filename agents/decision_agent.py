@@ -329,7 +329,11 @@ class DecisionAgent:
             return {
                 "status": "Ineligible",
                 "eligible": False,
-                "summary": "Some known values already fail eligibility and no further questions can make this eligible.",
+                "summary": (
+                    "Some known values already fail eligibility, but these are often"
+                    " fixable with time or a stronger profile. Focus on the areas below"
+                    " and revisit once they improve."
+                ),
                 "failed_rules": [rule["name"] for rule in failures],
                 "rule_breakdown": failures,
                 "metrics": {

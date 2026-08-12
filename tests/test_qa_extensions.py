@@ -210,14 +210,16 @@ def test_interview_agent_falls_back_to_static_question_without_llm(monkeypatch: 
     monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda *args, **kwargs: None)
     monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "I earn 120000")
 
+    greeting_text = "Hi there! I'm Alex, and I'm here to help you with a mortgage pre-check."
     agent = InterviewAgent(
         interview_policy=[{"field": "annual_income", "question": "What is your annual income?"}],
         system_prompt="You are a helpful interviewer",
         llm_client=None,
+        greeting_text=greeting_text,
     )
     state = agent({"applicant_profile": {}, "conversation_history": [], "followup_field": None})
     assert state["current_question_field"] == "annual_income"
-    assert "annual income" in state["current_question"].lower()
+    assert state["current_question"].startswith(greeting_text)
     assert state["latest_user_response"] == "I earn 120000"
 
 

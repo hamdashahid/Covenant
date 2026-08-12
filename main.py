@@ -76,7 +76,7 @@ def _load_greeting(path: Path) -> str:
         return env.strip()
     if path.exists():
         return path.read_text(encoding="utf-8").strip()
-    return ""
+    return "Hi there! I'm Alex, and I'm here to help you with a mortgage pre-check."
 
 
 def main() -> None:
