@@ -76,7 +76,7 @@ def _load_greeting(path: Path) -> str:
         return env.strip()
     if path.exists():
         return path.read_text(encoding="utf-8").strip()
-    return "Hi there! I'm Alex, and I'm here to help you with a mortgage pre-check."
+    return ""
 
 
 def main() -> None:
@@ -175,7 +175,7 @@ def main() -> None:
         profile=final_state.get("applicant_profile", {}),
         report=final_state.get("final_report", {}),
     )
-# commit
+
 
 if __name__ == "__main__":
     main()

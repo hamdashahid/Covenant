@@ -30,7 +30,8 @@ class SQLiteStore:
                     session_state TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     closed_at TEXT,
-                    tags TEXT
+                    tags TEXT,
+                    conversation_tag TEXT
                 )
                 """
             )
@@ -72,6 +73,8 @@ class SQLiteStore:
             cols = [r[1] for r in cur]
             if "tags" not in cols:
                 conn.execute("ALTER TABLE sessions ADD COLUMN tags TEXT")
+            if "conversation_tag" not in cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN conversation_tag TEXT")
             cur = conn.execute("PRAGMA table_info(messages)").fetchall()
             cols = [r[1] for r in cur]
             if "tags" not in cols:
@@ -80,7 +83,7 @@ class SQLiteStore:
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT session_id, model_id, session_state, created_at, closed_at, tags FROM sessions WHERE session_id = ?",
+                "SELECT session_id, model_id, session_state, created_at, closed_at, tags, conversation_tag FROM sessions WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
         if not row:
@@ -90,6 +93,7 @@ class SQLiteStore:
             tags = json.loads(row["tags"]) if row["tags"] else None
         except Exception:
             tags = None
+        conversation_tag = row["conversation_tag"] if "conversation_tag" in row.keys() else None
         return {
             "session_id": row["session_id"],
             "model_id": row["model_id"],
@@ -97,6 +101,7 @@ class SQLiteStore:
             "created_at": row["created_at"],
             "closed_at": row["closed_at"],
             "tags": tags,
+            "conversation_tag": conversation_tag,
         }
 
     def create_session(self, session_id: str, model_id: str, tags: list[str] | None = None) -> None:
@@ -104,14 +109,69 @@ class SQLiteStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO sessions (session_id, model_id, session_state, created_at, closed_at, tags)
-                VALUES (?, ?, ?, ?, NULL, ?)
+                INSERT INTO sessions (session_id, model_id, session_state, created_at, closed_at, tags, conversation_tag)
+                VALUES (?, ?, ?, ?, NULL, ?, NULL)
                 ON CONFLICT(session_id) DO UPDATE SET
                     model_id=excluded.model_id,
                     tags=COALESCE(excluded.tags, sessions.tags)
                 """,
                 (session_id, model_id, "in_progress", now, json.dumps(tags) if tags is not None else None),
             )
+
+    def merge_session_tags(self, session_id: str, tags: list[str] | None) -> None:
+        if not tags:
+            return
+        existing = self.get_session(session_id)
+        existing_tags = existing.get("tags") if existing else []
+        if not isinstance(existing_tags, list):
+            existing_tags = []
+        merged: list[str] = []
+        for tag in [*existing_tags, *tags]:
+            value = str(tag).strip()
+            if value and value not in merged:
+                merged.append(value)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET tags = ? WHERE session_id = ?",
+                (json.dumps(merged), session_id),
+            )
+
+    def set_conversation_tag(self, session_id: str, conversation_tag: str | None) -> None:
+        if not conversation_tag:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET conversation_tag = ? WHERE session_id = ?",
+                (conversation_tag, session_id),
+            )
+
+    def get_available_tags(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT conversation_tag FROM sessions WHERE conversation_tag IS NOT NULL AND trim(conversation_tag) <> '' ORDER BY conversation_tag"
+            ).fetchall()
+        tags = []
+        for row in rows:
+            tag = str(row["conversation_tag"]).strip()
+            if tag and tag not in tags:
+                tags.append(tag)
+        return tags
+
+    def get_conversations_by_tag(self, tag: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT session_id, conversation_tag, created_at, closed_at FROM sessions WHERE conversation_tag = ? ORDER BY created_at DESC",
+                (tag,),
+            ).fetchall()
+        return [
+            {
+                "session_id": row["session_id"],
+                "conversation_tag": row["conversation_tag"],
+                "created_at": row["created_at"],
+                "closed_at": row["closed_at"],
+            }
+            for row in rows
+        ]
 
     def update_session_state(self, session_id: str, session_state: str) -> None:
         with self._connect() as conn:
