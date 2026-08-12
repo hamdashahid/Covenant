@@ -321,3 +321,125 @@ def test_early_termination_offer_for_six_of_seven_rules():
     updated = da(state)
     assert updated.get("offer_early_termination") is True
     assert updated.get("auto_terminated") is False
+
+
+def test_greeting_is_not_treated_as_a_ciip_answer(monkeypatch):
+    monkeypatch.setattr("core.terminal_ui.print_agent_message", lambda *args, **kwargs: None)
+    monkeypatch.setattr("core.terminal_ui.print_thinking", lambda *args, **kwargs: None)
+    monkeypatch.setattr("core.terminal_ui.get_answer_prompt", lambda: "Hi")
+
+    interview_agent = InterviewAgent([], "system prompt", llm_client=None)
+
+    def extraction_node_should_not_run(state):
+        raise AssertionError("Greeting should not trigger extraction")
+
+    graph = build_ciap_graph(
+        interview_agent=interview_agent,
+        extraction_validation_node=extraction_node_should_not_run,
+        decision_agent=DecisionAgent(rule_evaluator=type("R", (), {"evaluate": lambda self, profile: {"status": "Requires More Info", "summary": "", "rule_breakdown": []}})()),
+        on_turn_complete=lambda s: None,
+        on_completed=lambda s: None,
+    )
+
+    final = graph.invoke({"session_id": "s-greeting", "conversation_history": []})
+    assert final.get("current_question")
+    assert final.get("applicant_profile", {}) == {}
+
+
+def test_natural_opt_out_stops_the_flow(monkeypatch):
+    monkeypatch.setattr("core.terminal_ui.print_agent_message", lambda *args, **kwargs: None)
+    monkeypatch.setattr("core.terminal_ui.print_thinking", lambda *args, **kwargs: None)
+    monkeypatch.setattr("core.terminal_ui.get_answer_prompt", lambda: "I don't want to continue this conversation.")
+
+    interview_agent = InterviewAgent([], "system prompt", llm_client=None)
+
+    def extraction_node_should_not_run(state):
+        raise AssertionError("Stop intent should skip extraction")
+
+    graph = build_ciap_graph(
+        interview_agent=interview_agent,
+        extraction_validation_node=extraction_node_should_not_run,
+        decision_agent=DecisionAgent(rule_evaluator=type("R", (), {"evaluate": lambda self, profile: {"status": "Requires More Info", "summary": "", "rule_breakdown": []}})()),
+        on_turn_complete=lambda s: None,
+        on_completed=lambda s: None,
+    )
+
+    final = graph.invoke({"session_id": "s-stop", "conversation_history": []})
+    assert final.get("user_requested_stop") is True
+    assert final.get("decision_status") == "Stopped by User"
+
+
+def test_deterministic_ineligibility_finalizes_without_more_questions():
+    class FakeEvaluator:
+        def evaluate(self, profile):
+            return {
+                "status": "Ineligible",
+                "summary": "Income is too low",
+                "rule_breakdown": [
+                    {"name": "Annual Income", "passed": False, "value_display": "Rs 50000", "threshold_display": "minimum Rs 100000 required"},
+                    {"name": "Credit Score", "passed": True, "value_display": "700", "threshold_display": "minimum 640 required"},
+                ],
+            }
+
+    decision_agent = DecisionAgent(rule_evaluator=FakeEvaluator())
+    state = {
+        "applicant_profile": {
+            "annual_income": 50000,
+            "credit_score": 700,
+        },
+        "max_turns": 8,
+        "turn_count": 0,
+    }
+    updated = decision_agent(state)
+    assert updated.get("needs_followup") is False
+    assert updated.get("decision_status") == "Ineligible"
+    assert updated.get("final_report", {}).get("status") == "Ineligible"
+
+
+def test_merge_session_tags_is_idempotent(tmp_path):
+    db_file = tmp_path / "test_tags.db"
+    store = SQLiteStore(db_path=str(db_file))
+    session_id = "sess-tags-merge"
+    store.create_session(session_id, "model-x")
+
+    store.merge_session_tags(session_id, ["ciap-ready", "existing"])
+    store.merge_session_tags(session_id, ["ciap-ready", "new-tag"])
+
+    session = store.get_session(session_id)
+    assert session["tags"] == ["ciap-ready", "existing", "new-tag"]
+
+
+def test_decision_agent_assigns_single_final_tag():
+    class FakeEvaluator:
+        def __init__(self):
+            self.rules = {"income_threshold": 100000, "min_credit_score": 640}
+
+        def evaluate(self, profile):
+            return {
+                "status": "Ineligible",
+                "summary": "Income is too low",
+                "rule_breakdown": [],
+            }
+
+    decision_agent = DecisionAgent(rule_evaluator=FakeEvaluator())
+    updated = decision_agent({
+        "applicant_profile": {"annual_income": 50000, "credit_score": 600},
+        "max_turns": 8,
+        "turn_count": 0,
+    })
+
+    assert updated.get("conversation_tag") == "Unqualified - Low Income and Low Credit"
+
+
+def test_sqlite_store_conversation_tag_persistence_and_grouping(tmp_path):
+    db_file = tmp_path / "test_tag_groups.db"
+    store = SQLiteStore(db_path=str(db_file))
+    session_id = "sess-tag-group"
+    store.create_session(session_id, "model-x")
+    store.set_conversation_tag(session_id, "Qualified - Ready")
+
+    session = store.get_session(session_id)
+    assert session["conversation_tag"] == "Qualified - Ready"
+    assert store.get_available_tags() == ["Qualified - Ready"]
+    grouped = store.get_conversations_by_tag("Qualified - Ready")
+    assert grouped[0]["session_id"] == session_id

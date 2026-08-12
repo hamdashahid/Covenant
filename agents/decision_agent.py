@@ -290,7 +290,7 @@ class DecisionAgent:
         }
 
     def _deterministic_early_report(self, profile: dict[str, Any]) -> dict[str, Any] | None:
-        if not isinstance(self.rule_evaluator, type(self)) and not hasattr(self.rule_evaluator, "rules"):
+        if not hasattr(self.rule_evaluator, "rules"):
             return None
 
         income_threshold = float(self.rule_evaluator.rules.get("income_threshold", 0))
@@ -357,6 +357,10 @@ class DecisionAgent:
                 state["decision_summary"] = "User indicated no more information is available."
                 report = self._build_not_evaluated_report(profile, state["decision_summary"])
                 state["final_report"] = report
+                state["lead_step"] = "finalized"
+                state["summary"] = state["decision_summary"]
+                state["qualification_category"] = "requires_more_info"
+                state["conversation_status"] = "in_progress"
                 state["offer_early_termination"] = False
                 state["auto_terminated"] = False
                 state["session_tags"] = self._derive_session_tags(report, state)
@@ -368,6 +372,10 @@ class DecisionAgent:
             state["needs_followup"] = False
             state["decision_status"] = report["status"]
             state["decision_summary"] = report["summary"]
+            state["lead_step"] = "finalized"
+            state["summary"] = report["summary"]
+            state["qualification_category"] = report["status"].lower()
+            state["conversation_status"] = "completed"
             state["final_report"] = report
             state["offer_early_termination"] = False
             state["auto_terminated"] = False
@@ -381,6 +389,10 @@ class DecisionAgent:
             state["needs_followup"] = False
             state["decision_status"] = deterministic_report["status"]
             state["decision_summary"] = deterministic_report["summary"]
+            state["lead_step"] = "finalized"
+            state["summary"] = deterministic_report["summary"]
+            state["qualification_category"] = deterministic_report["status"].lower()
+            state["conversation_status"] = "completed"
             state["final_report"] = deterministic_report
             state["offer_early_termination"] = False
             state["auto_terminated"] = True
@@ -399,6 +411,10 @@ class DecisionAgent:
                 "missing_fields": missing,
             }
             state["final_report"] = report
+            state["lead_step"] = "collecting"
+            state["summary"] = state["decision_summary"]
+            state["qualification_category"] = "requires_more_info"
+            state["conversation_status"] = "in_progress"
             state["session_tags"] = self._derive_session_tags(report, state)
             state["conversation_tag"] = self._derive_conversation_tag(report, state)
             return state
@@ -416,6 +432,10 @@ class DecisionAgent:
                 "missing_fields": missing,
             }
             state["final_report"] = report
+            state["lead_step"] = "finalized"
+            state["summary"] = state["decision_summary"]
+            state["qualification_category"] = "requires_more_info"
+            state["conversation_status"] = "in_progress"
             state["session_tags"] = self._derive_session_tags(report, state)
             state["conversation_tag"] = self._derive_conversation_tag(report, state)
             return state
@@ -425,12 +445,17 @@ class DecisionAgent:
         state["needs_followup"] = False
         state["decision_status"] = report["status"]
         state["decision_summary"] = report["summary"]
+        state["lead_step"] = "finalized"
+        state["summary"] = report["summary"]
+        state["qualification_category"] = report["status"].lower()
+        state["conversation_status"] = "completed"
         state["final_report"] = report
         state["session_tags"] = self._derive_session_tags(report, state)
         state["conversation_tag"] = self._derive_conversation_tag(report, state)
         if state.get("user_confirmed_early_end"):
             state["needs_followup"] = False
             state["followup_field"] = None
+            state["session_tags"] = self._derive_session_tags(report, state)
             return state
         try:
             passed_count = sum(1 for r in report.get("rule_breakdown", []) if r.get("passed"))
@@ -451,5 +476,6 @@ class DecisionAgent:
         else:
             state["offer_early_termination"] = False
             state["auto_terminated"] = False
+        state["session_tags"] = self._derive_session_tags(report, state)
+        state["conversation_tag"] = self._derive_conversation_tag(report, state)
         return state
-    
