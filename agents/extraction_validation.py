@@ -29,10 +29,27 @@ class ExtractionValidationNode:
         text = str(value).strip()
         if not text:
             return ""
-        # Remove currency symbols, spaces, and any grouping separators before parsing.
-        text = re.sub(r"[\$₹£€\s]", "", text)
-        # Allow comma grouping in both US and Indian formats by removing commas.
+        # Remove currency symbols and comma grouping before parsing.
+        text = re.sub(r"[\$₹£€]", "", text)
         text = text.replace(",", "")
+
+        # Extract the first numeric token, allowing modifiers like k / m and
+        # fuzzy prefixes such as above, below, around, or plus signs.
+        match = re.search(r"([-+]?\d+(?:\.\d+)?)([kKmM]?)", text)
+        if match:
+            number_text = match.group(1)
+            suffix = match.group(2).lower()
+            try:
+                value_float = float(number_text)
+            except (TypeError, ValueError, OverflowError):
+                return text
+            if suffix == "k":
+                value_float *= 1_000
+            elif suffix == "m":
+                value_float *= 1_000_000
+            return str(value_float)
+
+        # Preserve the cleaned string if no numeric token was found.
         return text
 
     def _parse_float(self, raw: Any) -> float | None:
@@ -119,6 +136,12 @@ class ExtractionValidationNode:
             value = self._parse_float(response)
             if value is not None:
                 inferred["down_payment"] = value
+
+        # Property type inference: look for keywords
+        if re.search(r"home|house|resid|live in|residential", response.lower()):
+            inferred["property_type"] = "residential"
+        elif re.search(r"shop|store|commercial|business|office|warehouse", response.lower()):
+            inferred["property_type"] = "commercial"
 
         return inferred
 
@@ -209,6 +232,7 @@ class ExtractionValidationNode:
         )
         try:
             raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
+            extraction_failed = False
         except Exception as exc:  # pragma: no cover - defensive guard
             raw = json.dumps(
                 {
@@ -217,10 +241,11 @@ class ExtractionValidationNode:
                     "issues": [f"LLM extraction failed: {exc}"],
                 }
             )
+            extraction_failed = True
         fields, confidence, parse_issues = self._parse_response(raw)
         validated_fields, validation_issues = self._coerce_and_validate(fields)
 
-        if confidence < 0.30 or (not validated_fields and not parse_issues):
+        if not extraction_failed and (confidence < 0.30 or (not validated_fields and not parse_issues)):
             inferred_fields = self._infer_fields_from_question(
                 state.get("latest_user_response", ""),
                 state.get("current_question", ""),

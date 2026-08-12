@@ -174,6 +174,12 @@ def print_final_result(status: str, summary: str, profile: dict[str, Any], repor
             + "see exactly which ones and why."
             + Style.RESET_ALL
         )
+        print(
+            Style.BRIGHT
+            + "These are commonly fixable with time or a stronger profile, so a few focused "
+            + "changes could make a real difference."
+            + Style.RESET_ALL
+        )
 
     # ---- Rule-by-rule breakdown ----
     print()

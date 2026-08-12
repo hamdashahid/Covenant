@@ -75,9 +75,11 @@ class InterviewAgent:
             )
         elif is_first_turn:
             nudge = (
-                "This is the very start of the conversation. Greet the applicant warmly in one short "
-                "sentence, briefly explain you'll chat with them to understand their situation for a "
-                f"mortgage pre-check, then naturally ask about: {field_context}."
+                "This is the very start of the conversation. Introduce yourself as Alex in one short, "
+                "friendly sentence, then ask a warm starter question before the first hard numbers. "
+                "For example, ask something like: 'Are you looking to buy on your own or with someone else?' "
+                "or 'Is this going to be your first home?' Then naturally move toward: "
+                f"{field_context}."
             )
         else:
             nudge = (
