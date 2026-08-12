@@ -75,6 +75,56 @@ class TestExtractionMalformedResponses(unittest.TestCase):
         self.assertEqual(state["applicant_profile"], {})
         self.assertIn("Extractor response was not valid JSON", state["last_extraction"]["issues"])
 
+    def test_accepts_above_800_credit_score(self) -> None:
+        node = make_node({
+            "fields": {"credit_score": "above 800"},
+            "confidence": 0.9,
+            "issues": [],
+        })
+        state = node(base_state("Above 800"))
+        self.assertEqual(state["applicant_profile"]["credit_score"], 800)
+
+    def test_accepts_125k_income(self) -> None:
+        node = make_node({
+            "fields": {"annual_income": "125k"},
+            "confidence": 0.9,
+            "issues": [],
+        })
+        state = node(base_state("About 125k"))
+        self.assertEqual(state["applicant_profile"]["annual_income"], 125000.0)
+
+    def test_clear_numeric_credit_score_vs_vague_answer(self) -> None:
+        clear_node = make_node({
+            "fields": {"credit_score": "above 800"},
+            "confidence": 0.9,
+            "issues": [],
+        })
+        clear_state = clear_node(
+            {
+                "conversation_history": [],
+                "applicant_profile": {},
+                "current_question": "What is your credit score?",
+                "latest_user_response": "Above 800",
+            }
+        )
+        self.assertEqual(clear_state["applicant_profile"]["credit_score"], 800)
+
+        vague_node = make_node({
+            "fields": {"credit_score": "close to perfect"},
+            "confidence": 0.9,
+            "issues": [],
+        })
+        vague_state = vague_node(
+            {
+                "conversation_history": [],
+                "applicant_profile": {},
+                "current_question": "What is your credit score?",
+                "latest_user_response": "Close to perfect",
+            }
+        )
+        self.assertNotIn("credit_score", vague_state["applicant_profile"])
+        self.assertIn("credit_score must be between 300 and 850", vague_state["last_extraction"]["issues"])
+
     def test_missing_fields_key_does_not_crash(self) -> None:
         node = make_node({"confidence": 0.5})
         state = node(base_state("hello"))

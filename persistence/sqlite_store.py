@@ -184,6 +184,47 @@ class SQLiteStore:
                 (session_state, session_id),
             )
 
+    def update_session_tags(self, session_id: str, tags: list[str] | None) -> None:
+        if tags is None:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET tags = ?
+                WHERE session_id = ?
+                """,
+                (json.dumps(tags), session_id),
+            )
+
+    def get_sessions_with_tags(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT session_id, model_id, session_state, created_at, closed_at, tags
+                FROM sessions
+                ORDER BY closed_at IS NULL, closed_at DESC, created_at DESC, session_id DESC
+                """
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            tags = None
+            try:
+                tags = json.loads(row["tags"]) if row["tags"] else None
+            except Exception:
+                tags = None
+            out.append(
+                {
+                    "session_id": row["session_id"],
+                    "model_id": row["model_id"],
+                    "session_state": row["session_state"],
+                    "created_at": row["created_at"],
+                    "closed_at": row["closed_at"],
+                    "tags": tags,
+                }
+            )
+        return out
+
     def upsert_profile(
         self,
         session_id: str,
@@ -267,16 +308,16 @@ class SQLiteStore:
             out.append({"role": row["role"], "content": row["content"], "tags": tags})
         return out
 
-    def close_session(self, session_id: str, report: dict[str, Any]) -> None:
+    def close_session(self, session_id: str, report: dict[str, Any], tags: list[str] | None = None) -> None:
         now = _utc_now()
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE sessions
-                SET session_state = ?, closed_at = ?
+                SET session_state = ?, closed_at = ?, tags = COALESCE(?, tags)
                 WHERE session_id = ?
                 """,
-                ("closed", now, session_id),
+                ("closed", now, json.dumps(tags) if tags is not None else None, session_id),
             )
             conn.execute(
                 """
