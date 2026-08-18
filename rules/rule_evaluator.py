@@ -222,13 +222,25 @@ class RuleEvaluator:
                 ),
             })
         else:
-            rule_breakdown.append({
-                "name": "Down Payment",
-                "passed": True,
-                "value_display": "Not provided",
-                "threshold_display": f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
-                "explanation": "This check was not evaluated because down-payment information was not provided.",
-            })
+            if has_down_payment:
+                rule_breakdown.append({
+                    "name": "Down Payment",
+                    "passed": True,
+                    "value_display": f"Rs {down_payment:,.0f}",
+                    "threshold_display": f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
+                    "explanation": (
+                        f"You've indicated a down payment of Rs {down_payment:,.0f}, but this check "
+                        "could not be evaluated as a percentage because the property value was not provided."
+                    ),
+                })
+            else:
+                rule_breakdown.append({
+                    "name": "Down Payment",
+                    "passed": True,
+                    "value_display": "Not provided",
+                    "threshold_display": f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
+                    "explanation": "This check was not evaluated because down-payment information was not provided.",
+                })
 
         failures = [rule["name"] for rule in rule_breakdown if not rule["passed"]]
         eligible = len(failures) == 0

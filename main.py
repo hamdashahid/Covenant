@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-# comment
+
 from agents.decision_agent import DecisionAgent
 from agents.extraction_validation import ExtractionValidationNode
 from agents.interview_agent import InterviewAgent
@@ -27,12 +27,8 @@ except Exception:
 
 DEFAULT_POLICY = [
     {
-        "field": "annual_income",
-        "question": "What is your annual income (in your local currency)?",
-    },
-    {
-        "field": "monthly_debt",
-        "question": "What is your total monthly debt payment (loans, credit cards, etc.)?",
+        "field": "down_payment",
+        "question": "Is a down payment your biggest hurdle right now? If so, roughly how much are you able to put down?",
     },
     {
         "field": "credit_score",
@@ -47,16 +43,12 @@ DEFAULT_POLICY = [
         "question": "How many years have you been at your current job or business?",
     },
     {
-        "field": "property_value",
-        "question": "What is the value (price) of the property you want to buy?",
+        "field": "annual_income",
+        "question": "What is your annual income (in your local currency)?",
     },
     {
-        "field": "requested_loan_amount",
-        "question": "How much loan amount are you requesting?",
-    },
-    {
-        "field": "down_payment",
-        "question": "How much can you pay upfront as a down payment?",
+        "field": "total_savings",
+        "question": "How much have you saved up so far, in total?",
     },
 ]
 SYSTEM_PROMPT_PATH = Path("config") / "prompts_system_prompt.txt"

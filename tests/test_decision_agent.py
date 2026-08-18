@@ -51,6 +51,7 @@ class TestDecisionAgent(unittest.TestCase):
             "property_value": 5000000,
             "requested_loan_amount": 4000000,
             "down_payment": 1000000,
+            "total_savings": 1500000,
         }
         agent = DecisionAgent(
             rule_evaluator=StubRuleEvaluator(
@@ -74,7 +75,7 @@ class TestDecisionAgent(unittest.TestCase):
             "max_turns": 16,
         }
         result = agent(state)
-        self.assertEqual(result["followup_field"], "credit_score")
+        self.assertEqual(result["followup_field"], "down_payment")
 
 
 if __name__ == "__main__":

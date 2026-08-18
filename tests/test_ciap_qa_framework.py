@@ -211,7 +211,7 @@ class TestDecisionFallbackAndStateTransitions:
         result = decision_agent(state)
         assert result["needs_followup"] is True
         assert result["decision_status"] == "Requires More Info"
-        assert result["followup_field"] == "monthly_debt"
+        assert result["followup_field"] == "down_payment"
 
     def test_max_turns_reached_returns_graceful_requires_more_info(self, decision_agent) -> None:
         state = {"applicant_profile": {"annual_income": 50000}, "turn_count": 16, "max_turns": 16}

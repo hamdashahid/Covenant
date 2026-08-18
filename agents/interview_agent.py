@@ -12,10 +12,13 @@ logger = logging.getLogger(__name__)
 
 class InterviewAgent:
     """
-    Conducts the intake as a natural back-and-forth conversation rather than a
-    rigid form. The LLM decides how to phrase each turn (greeting, acknowledging
-    the applicant's last answer, asking about what's still missing). If the LLM
-    is unavailable, it falls back to the plain scripted question for that field.
+    Conversational interview agent.
+
+    IMPORTANT DESIGN RULE:
+        Python/state decides WHICH field should be asked next.
+        The LLM decides HOW that field should be asked.
+
+    This prevents the LLM from changing the interview order.
     """
 
     def __init__(
@@ -29,50 +32,184 @@ class InterviewAgent:
         self.system_prompt = system_prompt.strip()
         self.llm_client = llm_client
         self.greeting_text = (greeting_text or "").strip()
-        self.STOP_COMMANDS = {"stop", "end", "/stop", "/end"}
-        self.AFFIRMATIVE = {"yes", "y", "sure", "ok", "okay", "please"}
-        self.NEGATIVE = {"no", "n", "not now", "nope"}
+
+        self.STOP_COMMANDS = {
+            "stop",
+            "end",
+            "/stop",
+            "/end",
+        }
+
+        self.AFFIRMATIVE = {
+            "yes",
+            "y",
+            "sure",
+            "ok",
+            "okay",
+            "please",
+        }
+
+        self.NEGATIVE = {
+            "no",
+            "n",
+            "not now",
+            "nope",
+        }
+
         self.FINALIZE_PATTERNS = [
             re.compile(
-                r"^no(?:\s*(?:,?\s*(?:that'?s\s+all(?:\s+the\s+information\s+i\s+have)?|that\s+is\s+all(?:\s+the\s+information\s+i\s+have)?|all\s+i\s+have|that's\s+all|that\s+is\s+all|thanks?|thank\s+you|not\s+right\s+now|that's\s+it|that\s+is\s+it))?)?\s*[.!?]*$",
+                r"^no(?:\s*(?:,?\s*(?:"
+                r"that'?s\s+all(?:\s+the\s+information\s+i\s+have)?|"
+                r"that\s+is\s+all(?:\s+the\s+information\s+i\s+have)?|"
+                r"all\s+i\s+have|"
+                r"that's\s+all|"
+                r"that\s+is\s+all|"
+                r"thanks?|"
+                r"thank\s+you|"
+                r"not\s+right\s+now|"
+                r"that's\s+it|"
+                r"that\s+is\s+it"
+                r"))?)?\s*[.!?]*$",
                 re.IGNORECASE,
             ),
         ]
 
-    def _missing_fields(self, state: dict[str, Any]) -> tuple[list[str], str | None]:
-        profile = state.get("applicant_profile", {})
-        followup_field = state.get("followup_field")
-        order = [item["field"] for item in self.interview_policy]
-        missing = [f for f in order if f not in profile]
-        if followup_field and followup_field not in missing:
-            missing = [followup_field] + missing
+    # ================================================================
+    # FIELD MANAGEMENT
+    # ================================================================
+
+    def _missing_fields(
+        self,
+        state: dict[str, Any],
+    ) -> tuple[list[str], str | None]:
+
+        profile = state.get(
+            "applicant_profile",
+            {},
+        ) or {}
+
+        followup_field = state.get(
+            "followup_field"
+        )
+
+        # The interview policy is the ONLY source for the interview order.
+        policy_order = [
+            item["field"]
+            for item in self.interview_policy
+        ]
+
+        # A field is missing when it has not yet been successfully
+        # stored in the applicant profile.
+        missing = [
+            field
+            for field in policy_order
+            if field not in profile
+        ]
+
+        # If a previous answer requires clarification,
+        # that field gets priority.
+        if followup_field:
+            missing = [
+                followup_field,
+                *[
+                    field
+                    for field in missing
+                    if field != followup_field
+                ],
+            ]
+
         return missing, followup_field
 
-    def _static_question(self, field: str | None) -> str:
+    def _static_question(
+        self,
+        field: str | None,
+    ) -> str:
+
         for item in self.interview_policy:
             if item["field"] == field:
                 return item["question"]
-        return "Is there anything else you'd like to add about your situation?"
 
-    def _detect_greeting(self, text: str | None) -> bool:
-        cleaned = (text or "").strip()
-        if not cleaned:
-            return False
-        lowered = cleaned.lower()
-        if any(token in lowered for token in ["income", "credit", "debt", "loan", "property", "job", "employment", "score"]):
-            return False
-        return any(
-            lowered in {"hi", "hello", "hey", "hi there", "hey there", "hello there"}
-            or lowered.startswith(token)
-            for token in ["hi ", "hello ", "hey ", "good morning", "good afternoon", "good evening"]
+        return (
+            "Is there anything else you'd like to add "
+            "about your situation?"
         )
 
-    def _detect_stop_intent(self, text: str | None) -> bool:
-        cleaned = (text or "").strip().lower()
+    # ================================================================
+    # GREETING / STOP DETECTION
+    # ================================================================
+
+    def _detect_greeting(
+        self,
+        text: str | None,
+    ) -> bool:
+
+        cleaned = (text or "").strip()
+
         if not cleaned:
             return False
+
+        lowered = cleaned.lower()
+
+        # Do not classify mortgage answers as greetings.
+        mortgage_terms = [
+            "income",
+            "credit",
+            "debt",
+            "loan",
+            "property",
+            "job",
+            "employment",
+            "score",
+            "down payment",
+        ]
+
+        if any(
+            token in lowered
+            for token in mortgage_terms
+        ):
+            return False
+
+        greetings = {
+            "hi",
+            "hello",
+            "hey",
+            "hi there",
+            "hey there",
+            "hello there",
+        }
+
+        if lowered in greetings:
+            return True
+
+        greeting_prefixes = [
+            "hi ",
+            "hello ",
+            "hey ",
+            "good morning",
+            "good afternoon",
+            "good evening",
+        ]
+
+        return any(
+            lowered.startswith(prefix)
+            for prefix in greeting_prefixes
+        )
+
+    def _detect_stop_intent(
+        self,
+        text: str | None,
+    ) -> bool:
+
+        cleaned = (
+            text or ""
+        ).strip().lower()
+
+        if not cleaned:
+            return False
+
         if cleaned in self.STOP_COMMANDS:
             return True
+
         stop_phrases = [
             "i don't want to continue",
             "i do not want to continue",
@@ -90,7 +227,15 @@ class InterviewAgent:
             "stop contacting me",
             "end this conversation",
         ]
-        return any(phrase in cleaned for phrase in stop_phrases)
+
+        return any(
+            phrase in cleaned
+            for phrase in stop_phrases
+        )
+
+    # ================================================================
+    # CONVERSATIONAL QUESTION GENERATION
+    # ================================================================
 
     def _generate_conversational_question(
         self,
@@ -99,229 +244,792 @@ class InterviewAgent:
         followup_field: str | None,
         is_first_turn: bool,
     ) -> str:
+
         if not self.llm_client:
             return ""
 
-        history = [m for m in state.get("conversation_history", []) if m.get("role") != "system"]
-        field_context = ", ".join(FIELD_LABELS.get(f, f) for f in missing[:3])
+        history = [
+            message
+            for message in state.get(
+                "conversation_history",
+                [],
+            )
+            if message.get("role") != "system"
+        ]
 
-        if followup_field:
-            nudge = (
-                f"The applicant's last answer about {FIELD_LABELS.get(followup_field, followup_field)} "
-                "wasn't clear or usable. Warmly ask them to clarify just that one thing, in plain "
-                "everyday language — don't mention 'validation' or technical field names."
-            )
-        elif is_first_turn:
-            nudge = (
-                "This is the very start of the conversation. Introduce yourself as Alex in one short, "
-                "friendly sentence, then ask a warm starter question before the first hard numbers. "
-                "For example, ask something like: 'Are you looking to buy on your own or with someone else?' "
-                "or 'Is this going to be your first home?' Then naturally move toward: "
-                f"{field_context}."
-            )
-        else:
-            nudge = (
-                f"Briefly and naturally acknowledge what they just told you (one short phrase), then ask "
-                f"about: {field_context}. Ask about only one topic at a time, unless two are closely "
-                "related (e.g. property price and loan amount)."
-            )
+        # ============================================================
+        # CRITICAL:
+        # Python selects the target field.
+        # The LLM is NOT allowed to select another field.
+        # ============================================================
 
-        try:
-            return self.llm_client.generate_reply(
-                self.system_prompt,
-                history + [{"role": "system", "content": nudge}],
+        target_field = (
+            followup_field
+            if followup_field in missing
+            else (
+                missing[0]
+                if missing
+                else None
             )
-        except Exception:
+        )
+
+        if not target_field:
             return ""
 
-    def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
-        missing, followup_field = self._missing_fields(state)
-        target_field = (followup_field if followup_field in missing else missing[0]) if missing else None
+        field_label = FIELD_LABELS.get(
+            target_field,
+            target_field,
+        )
 
-        history = list(state.get("conversation_history", []))
-        is_first_turn = not any(m.get("role") == "assistant" for m in history)
+        asked_fields = list(
+            state.get(
+                "asked_fields",
+                [],
+            )
+        )
 
-        # If the decision agent has already offered early termination, confirm it before asking
-        # another generic followup question. This keeps the UX stable when multiple fields were
-        # provided in one turn and a likely conclusion is already available.
-        if state.get("offer_early_termination") and not state.get("early_offered_already"):
+        answered_fields = list(
+            state.get(
+                "answered_fields",
+                [],
+            )
+        )
+
+        question_history = list(
+            state.get(
+                "question_history",
+                [],
+            )
+        )
+
+        # ============================================================
+        # BUILD STRICT INSTRUCTION
+        # ============================================================
+
+        if followup_field:
+            instruction = f"""
+The applicant needs clarification about exactly this topic:
+
+TARGET FIELD:
+{target_field}
+
+TARGET TOPIC:
+{field_label}
+
+Ask ONLY about this topic.
+
+Do not move to another topic.
+Do not introduce another field.
+Do not ask a second unrelated question.
+
+Acknowledge the previous answer briefly and naturally,
+then ask for the missing clarification.
+"""
+
+        elif is_first_turn:
+            instruction = """
+This is the opening of the mortgage conversation.
+
+Introduce yourself naturally as Alex.
+
+Then ask ONE short warm opening question about whether
+this is the applicant's first home.
+
+Do not ask about income, credit score, debt, employment,
+loan amount, property value, or down payment in the opening.
+
+The opening question is conversational context and is
+separate from the required eligibility fields.
+"""
+
+        else:
+            instruction = f"""
+The application has already selected the next required topic.
+
+TARGET FIELD:
+{target_field}
+
+TARGET TOPIC:
+{field_label}
+
+YOU MUST ASK ABOUT THIS TARGET FIELD.
+
+The target field has been selected by the application.
+You are NOT allowed to select a different field.
+
+Your job is ONLY to make the question sound natural,
+warm, concise, and conversational.
+
+Do NOT:
+- skip this field
+- jump to a later field
+- invent a new field
+- ask about annual income if the target is down payment
+- ask about debt if the target is credit score
+- ask multiple unrelated questions
+- repeat an already answered field
+
+You may briefly acknowledge the applicant's latest answer,
+then ask ONE question about the TARGET FIELD.
+"""
+
+        memory = f"""
+CONVERSATION MEMORY
+
+Already answered fields:
+{answered_fields}
+
+Previously asked fields:
+{asked_fields}
+
+Recent question history:
+{question_history[-5:]}
+
+CURRENT TARGET FIELD:
+{target_field}
+
+CURRENT TARGET TOPIC:
+{field_label}
+"""
+
+        strict_rules = """
+STRICT RULES:
+
+1. Ask exactly ONE primary question.
+2. The CURRENT TARGET FIELD is authoritative.
+3. Never change the target field.
+4. Never skip the target field.
+5. Never invent a required field.
+6. Never repeat an already answered topic.
+7. Keep the response short.
+8. Use natural conversational language.
+9. Use a brief acknowledgement when appropriate.
+10. Do not mention fields, schemas, agents, state, policies,
+    validation, or technical implementation.
+11. Do not calculate eligibility.
+12. Do not promise unsupported actions.
+"""
+
+        prompt = (
+            instruction
+            + "\n"
+            + memory
+            + "\n"
+            + strict_rules
+        )
+
+        try:
+            response = self.llm_client.generate_reply(
+                self.system_prompt,
+                history
+                + [
+                    {
+                        "role": "system",
+                        "content": prompt,
+                    }
+                ],
+            )
+
+            response = (
+                response or ""
+            ).strip()
+
+            # --------------------------------------------------------
+            # Safety check:
+            # Never accept an empty LLM response.
+            # --------------------------------------------------------
+
+            if not response:
+                return ""
+
+            return response
+
+        except Exception:
+            logger.exception(
+                "Conversational question generation failed."
+            )
+            return ""
+
+    # ================================================================
+    # QUESTION TRACKING
+    # ================================================================
+
+    def _track_question(
+        self,
+        state: dict[str, Any],
+        field: str | None,
+        question: str,
+    ) -> None:
+
+        if not field:
+            return
+
+        asked_fields = list(
+            state.get(
+                "asked_fields",
+                [],
+            )
+        )
+
+        if field not in asked_fields:
+            asked_fields.append(field)
+
+        state["asked_fields"] = asked_fields
+
+        question_history = list(
+            state.get(
+                "question_history",
+                [],
+            )
+        )
+
+        question_history.append(
+            {
+                "field": field,
+                "question": question,
+            }
+        )
+
+        # Keep only recent questions.
+        state["question_history"] = (
+            question_history[-20:]
+        )
+
+        state["current_question_field"] = field
+
+    # ================================================================
+    # MAIN AGENT
+    # ================================================================
+
+    def __call__(
+        self,
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+
+        missing, followup_field = (
+            self._missing_fields(state)
+        )
+
+        # ============================================================
+        # TARGET FIELD IS SELECTED HERE — NOT BY THE LLM
+        # ============================================================
+
+        target_field = (
+            followup_field
+            if followup_field in missing
+            else (
+                missing[0]
+                if missing
+                else None
+            )
+        )
+
+        history = list(
+            state.get(
+                "conversation_history",
+                [],
+            )
+        )
+
+        is_first_turn = not any(
+            message.get("role") == "assistant"
+            for message in history
+        )
+
+        # ============================================================
+        # EARLY TERMINATION
+        # ============================================================
+
+        if (
+            state.get(
+                "offer_early_termination"
+            )
+            and not state.get(
+                "early_offered_already"
+            )
+        ):
+
             confirm_q = (
-                "I can already reach a likely conclusion based on what you've provided. "
+                "I can already reach a likely conclusion "
+                "based on what you've provided. "
                 "Would you like me to finalize now? (yes/no)"
             )
-            terminal_ui.print_agent_message(confirm_q, is_first_turn=is_first_turn)
-            confirm_resp = terminal_ui.get_answer_prompt().strip()
+
+            terminal_ui.print_agent_message(
+                confirm_q,
+                is_first_turn=is_first_turn,
+            )
+
+            confirm_resp = (
+                terminal_ui
+                .get_answer_prompt()
+                .strip()
+            )
+
             terminal_ui.print_thinking()
 
             if not history and self.system_prompt:
-                history.append({"role": "system", "content": self.system_prompt})
-            history.append({"role": "assistant", "content": confirm_q})
-            history.append({"role": "user", "content": confirm_resp})
+                history.append(
+                    {
+                        "role": "system",
+                        "content": self.system_prompt,
+                    }
+                )
+
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": confirm_q,
+                }
+            )
+
+            history.append(
+                {
+                    "role": "user",
+                    "content": confirm_resp,
+                }
+            )
 
             state["conversation_history"] = history
-            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["turn_count"] = (
+                int(
+                    state.get(
+                        "turn_count",
+                        0,
+                    )
+                )
+                + 1
+            )
+
             state["early_offered_already"] = True
             state["current_question"] = confirm_q
             state["latest_user_response"] = confirm_resp
 
-            is_confirm_finalize = any(pattern.match(confirm_resp.strip()) for pattern in self.FINALIZE_PATTERNS)
-            resp_clean = (confirm_resp or "").strip().lower()
-            if is_confirm_finalize:
-                state["user_requested_finalize"] = True
+            if any(
+                pattern.match(
+                    confirm_resp.strip()
+                )
+                for pattern in self.FINALIZE_PATTERNS
+            ):
+                state[
+                    "user_requested_finalize"
+                ] = True
+
                 state["needs_followup"] = False
                 state["followup_field"] = None
-                state["offer_early_termination"] = False
+                state[
+                    "offer_early_termination"
+                ] = False
+
                 return state
-            if resp_clean in self.AFFIRMATIVE:
-                state["user_confirmed_early_end"] = True
+
+            if (
+                confirm_resp.lower()
+                in self.AFFIRMATIVE
+            ):
+                state[
+                    "user_confirmed_early_end"
+                ] = True
                 state["needs_followup"] = False
+
             else:
-                state["offer_early_termination"] = False
-                state["user_confirmed_early_end"] = False
+                state[
+                    "offer_early_termination"
+                ] = False
+                state[
+                    "user_confirmed_early_end"
+                ] = False
 
             return state
 
-        question = self._generate_conversational_question(state, missing, followup_field, is_first_turn)
-        if not question:
-            base = self._static_question(target_field)
-            question = (
-                f"Hi! I'm here to help figure out your mortgage eligibility. {base}"
-                if is_first_turn else base
-            )
-        # Prepend configured greeting on the very first assistant turn if provided
-        if is_first_turn and self.greeting_text:
-            # avoid duplicating if the LLM already included a greeting
-            if not question.lower().startswith(self.greeting_text.lower()):
-                question = f"{self.greeting_text} {question}"
+        # ============================================================
+        # GENERATE QUESTION
+        # ============================================================
 
-        terminal_ui.print_agent_message(question, is_first_turn=is_first_turn)
-        user_response = terminal_ui.get_answer_prompt()
+        question = (
+            self._generate_conversational_question(
+                state=state,
+                missing=missing,
+                followup_field=followup_field,
+                is_first_turn=is_first_turn,
+            )
+        )
+
+        # ============================================================
+        # FALLBACK
+        # ============================================================
+
+        if not question:
+
+            base_question = (
+                self._static_question(
+                    target_field
+                )
+            )
+
+            if is_first_turn:
+                question = (
+                    "Hi! I'm here to help with "
+                    "your mortgage pre-check. "
+                    f"{base_question}"
+                )
+            else:
+                question = base_question
+
+        # ============================================================
+        # TRACK EXACT TARGET FIELD
+        # ============================================================
+
+        self._track_question(
+            state=state,
+            field=target_field,
+            question=question,
+        )
+
+        # ============================================================
+        # GREETING
+        # ============================================================
+
+        if (
+            is_first_turn
+            and self.greeting_text
+        ):
+            if not question.lower().startswith(
+                self.greeting_text.lower()
+            ):
+                question = (
+                    f"{self.greeting_text} "
+                    f"{question}"
+                )
+
+        # ============================================================
+        # ASK USER
+        # ============================================================
+
+        terminal_ui.print_agent_message(
+            question,
+            is_first_turn=is_first_turn,
+        )
+
+        user_response = (
+            terminal_ui
+            .get_answer_prompt()
+        )
+
         terminal_ui.print_thinking()
 
-        cleaned = (user_response or "").strip().lower()
-        is_stop_command = self._detect_stop_intent(user_response)
-        is_finalize_phrase = any(pattern.match(user_response.strip()) for pattern in self.FINALIZE_PATTERNS)
-        is_greeting = self._detect_greeting(user_response)
+        cleaned = (
+            user_response or ""
+        ).strip().lower()
+
+        is_stop_command = (
+            self._detect_stop_intent(
+                user_response
+            )
+        )
+
+        is_finalize_phrase = any(
+            pattern.match(
+                user_response.strip()
+            )
+            for pattern in self.FINALIZE_PATTERNS
+        )
+
+        is_greeting = (
+            self._detect_greeting(
+                user_response
+            )
+        )
+
         logger.debug(
-            "User response=%r cleaned=%r is_stop=%s is_finalize=%s is_greeting=%s",
+            "User response=%r cleaned=%r "
+            "is_stop=%s is_finalize=%s "
+            "is_greeting=%s target_field=%s",
             user_response,
             cleaned,
             is_stop_command,
             is_finalize_phrase,
             is_greeting,
+            target_field,
         )
 
-        # ----- Stop command detection (user-initiated end) -----
+        # ============================================================
+        # STOP
+        # ============================================================
+
         if is_stop_command:
-            # record final user message and mark session stopped
+
             if not history and self.system_prompt:
-                history.append({"role": "system", "content": self.system_prompt})
-            history.append({"role": "assistant", "content": question})
-            history.append({"role": "user", "content": user_response})
+                history.append(
+                    {
+                        "role": "system",
+                        "content": self.system_prompt,
+                    }
+                )
+
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": question,
+                }
+            )
+
+            history.append(
+                {
+                    "role": "user",
+                    "content": user_response,
+                }
+            )
 
             state["conversation_history"] = history
             state["current_question"] = question
-            state["latest_user_response"] = user_response
-            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state[
+                "latest_user_response"
+            ] = user_response
+
+            state["turn_count"] = (
+                int(
+                    state.get(
+                        "turn_count",
+                        0,
+                    )
+                )
+                + 1
+            )
+
             state["user_requested_stop"] = True
             state["skip_extraction"] = True
             state["needs_followup"] = False
             state["followup_field"] = None
-            state["decision_status"] = "Stopped by User"
-            state["decision_summary"] = "User ended the conversation."
+
+            state["decision_status"] = (
+                "Stopped by User"
+            )
+
+            state["decision_summary"] = (
+                "User ended the conversation."
+            )
+
             state["lead_step"] = "stop"
-            state["summary"] = "User ended the conversation."
-            state["qualification_category"] = "stopped"
-            state["conversation_status"] = "stopped"
-            state["session_tags"] = ["ciap-stopped"]
+            state["summary"] = (
+                "User ended the conversation."
+            )
+
+            state[
+                "qualification_category"
+            ] = "stopped"
+
+            state[
+                "conversation_status"
+            ] = "stopped"
+
+            state[
+                "session_tags"
+            ] = ["ciap-stopped"]
+
             state["final_report"] = {
                 "status": "Stopped by User",
-                "summary": "User ended the conversation.",
+                "summary": (
+                    "User ended the conversation."
+                ),
                 "stopped_by_user": True,
             }
+
             return state
 
+        # ============================================================
+        # GREETING RESPONSE
+        # ============================================================
+
         if is_greeting:
+
             if not history and self.system_prompt:
-                history.append({"role": "system", "content": self.system_prompt})
-            history.append({"role": "assistant", "content": question})
-            history.append({"role": "user", "content": user_response})
+                history.append(
+                    {
+                        "role": "system",
+                        "content": self.system_prompt,
+                    }
+                )
+
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": question,
+                }
+            )
+
+            history.append(
+                {
+                    "role": "user",
+                    "content": user_response,
+                }
+            )
 
             state["conversation_history"] = history
             state["current_question"] = question
-            state["current_question_field"] = target_field or "general"
-            state["latest_user_response"] = user_response
-            state["conversation_history"] = history
-            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state[
+                "current_question_field"
+            ] = target_field or "general"
+
+            state[
+                "latest_user_response"
+            ] = user_response
+
+            state["turn_count"] = (
+                int(
+                    state.get(
+                        "turn_count",
+                        0,
+                    )
+                )
+                + 1
+            )
+
             state["greeting_detected"] = True
             state["skip_extraction"] = True
             state["needs_followup"] = True
-            state["followup_field"] = target_field
+            state[
+                "followup_field"
+            ] = target_field
+
             state["lead_step"] = "greeting"
-            state["summary"] = "User greeted the assistant."
-            state["qualification_category"] = state.get("qualification_category") or "in_progress"
-            state["conversation_status"] = "in_progress"
+            state["summary"] = (
+                "User greeted the assistant."
+            )
+
+            state[
+                "qualification_category"
+            ] = (
+                state.get(
+                    "qualification_category"
+                )
+                or "in_progress"
+            )
+
+            state[
+                "conversation_status"
+            ] = "in_progress"
+
             return state
 
-        # ----- User finalize-at-current-state handling -----
+        # ============================================================
+        # USER WANTS TO FINALIZE
+        # ============================================================
+
         if is_finalize_phrase:
+
             if not history and self.system_prompt:
-                history.append({"role": "system", "content": self.system_prompt})
-            history.append({"role": "assistant", "content": question})
-            history.append({"role": "user", "content": user_response})
+                history.append(
+                    {
+                        "role": "system",
+                        "content": self.system_prompt,
+                    }
+                )
+
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": question,
+                }
+            )
+
+            history.append(
+                {
+                    "role": "user",
+                    "content": user_response,
+                }
+            )
 
             state["conversation_history"] = history
             state["current_question"] = question
-            state["current_question_field"] = target_field or "general"
-            state["latest_user_response"] = user_response
-            state["turn_count"] = int(state.get("turn_count", 0)) + 1
-            state["user_requested_finalize"] = True
+            state[
+                "current_question_field"
+            ] = target_field or "general"
+
+            state[
+                "latest_user_response"
+            ] = user_response
+
+            state["turn_count"] = (
+                int(
+                    state.get(
+                        "turn_count",
+                        0,
+                    )
+                )
+                + 1
+            )
+
+            state[
+                "user_requested_finalize"
+            ] = True
+
             state["needs_followup"] = False
             state["followup_field"] = None
-            state["decision_status"] = "Requires More Info"
-            state["decision_summary"] = "User indicated no more information is available."
-            return state
 
-        # ----- Early-termination confirmation handling -----
-        # If the decision agent offered early termination, ask for confirmation.
-        if state.get("offer_early_termination") and not state.get("early_offered_already"):
-            # ask a short confirmation instead of the usual followup
-            confirm_q = (
-                "I can already reach a likely conclusion based on what you've provided. "
-                "Would you like me to finalize now? (yes/no)"
+            state[
+                "decision_status"
+            ] = "Requires More Info"
+
+            state[
+                "decision_summary"
+            ] = (
+                "User indicated no more "
+                "information is available."
             )
-            terminal_ui.print_agent_message(confirm_q)
-            confirm_resp = terminal_ui.get_answer_prompt().strip()
-            terminal_ui.print_thinking()
-            # append assistant prompt and user response
-            if not history and self.system_prompt:
-                history.append({"role": "system", "content": self.system_prompt})
-            history.append({"role": "assistant", "content": confirm_q})
-            history.append({"role": "user", "content": confirm_resp})
-
-            state["conversation_history"] = history
-            state["turn_count"] = int(state.get("turn_count", 0)) + 1
-            state["early_offered_already"] = True
-
-            resp_clean = (confirm_resp or "").strip().lower()
-            if resp_clean in self.AFFIRMATIVE:
-                state["user_confirmed_early_end"] = True
-                state["needs_followup"] = False
-            else:
-                # user declined early termination; continue normal flow
-                state["offer_early_termination"] = False
-                state["user_confirmed_early_end"] = False
 
             return state
+
+        # ============================================================
+        # NORMAL TURN
+        # ============================================================
 
         if not history and self.system_prompt:
-            history.append({"role": "system", "content": self.system_prompt})
-        history.append({"role": "assistant", "content": question})
-        history.append({"role": "user", "content": user_response})
+            history.append(
+                {
+                    "role": "system",
+                    "content": self.system_prompt,
+                }
+            )
 
-        state["current_question"] = question
-        state["current_question_field"] = target_field or "general"
-        state["latest_user_response"] = user_response
-        state["conversation_history"] = history
-        state["turn_count"] = int(state.get("turn_count", 0)) + 1
+        history.append(
+            {
+                "role": "assistant",
+                "content": question,
+            }
+        )
+
+        history.append(
+            {
+                "role": "user",
+                "content": user_response,
+            }
+        )
+
+        state[
+            "current_question"
+        ] = question
+
+        state[
+            "current_question_field"
+        ] = target_field or "general"
+
+        state[
+            "latest_user_response"
+        ] = user_response
+
+        state[
+            "conversation_history"
+        ] = history
+
+        state["turn_count"] = (
+            int(
+                state.get(
+                    "turn_count",
+                    0,
+                )
+            )
+            + 1
+        )
+
         return state

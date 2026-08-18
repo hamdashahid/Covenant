@@ -42,6 +42,7 @@ def base_profile() -> dict[str, Any]:
         "property_value": 5000000,
         "requested_loan_amount": 4000000,
         "down_payment": 1000000,
+        "total_savings": 1500000,
     }
 
 
