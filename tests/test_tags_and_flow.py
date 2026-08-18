@@ -244,6 +244,7 @@ def test_graph_finalize_after_combined_multi_field_response(monkeypatch):
             "credit_score": 700,
             "employment_status": "employed",
             "employment_years": 5,
+            "total_savings": 50000,
         },
         "turn_count": 0,
         "max_turns": 16,
@@ -274,13 +275,11 @@ def test_early_termination_offer_and_confirm(monkeypatch):
     # Provide a complete profile so DecisionAgent proceeds to evaluation
     required_fields = [
         "annual_income",
-        "monthly_debt",
         "credit_score",
         "employment_status",
         "employment_years",
-        "property_value",
-        "requested_loan_amount",
         "down_payment",
+        "total_savings",
     ]
     state = {"applicant_profile": {f: 1 for f in required_fields}}
     updated = da(state)
@@ -309,13 +308,11 @@ def test_early_termination_offer_for_six_of_seven_rules():
     da.set_early_termination_thresholds(0.85, 1.0)
     required_fields = [
         "annual_income",
-        "monthly_debt",
         "credit_score",
         "employment_status",
         "employment_years",
-        "property_value",
-        "requested_loan_amount",
         "down_payment",
+        "total_savings",
     ]
     state = {"applicant_profile": {f: 1 for f in required_fields}}
     updated = da(state)
@@ -371,13 +368,18 @@ def test_natural_opt_out_stops_the_flow(monkeypatch):
 
 def test_deterministic_ineligibility_finalizes_without_more_questions():
     class FakeEvaluator:
+        # The deterministic early-exit path requires TWO known-bad values
+        # (income AND credit score both below threshold) as a safety margin,
+        # so it needs a real 'rules' dict to compare against.
+        rules = {"income_threshold": 100000, "min_credit_score": 640}
+
         def evaluate(self, profile):
             return {
                 "status": "Ineligible",
-                "summary": "Income is too low",
+                "summary": "Income and credit score are too low",
                 "rule_breakdown": [
                     {"name": "Annual Income", "passed": False, "value_display": "Rs 50000", "threshold_display": "minimum Rs 100000 required"},
-                    {"name": "Credit Score", "passed": True, "value_display": "700", "threshold_display": "minimum 640 required"},
+                    {"name": "Credit Score", "passed": False, "value_display": "600", "threshold_display": "minimum 640 required"},
                 ],
             }
 
@@ -385,7 +387,7 @@ def test_deterministic_ineligibility_finalizes_without_more_questions():
     state = {
         "applicant_profile": {
             "annual_income": 50000,
-            "credit_score": 700,
+            "credit_score": 600,
         },
         "max_turns": 8,
         "turn_count": 0,

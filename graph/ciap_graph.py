@@ -19,6 +19,10 @@ class CIAPState(TypedDict, total=False):
     profile_conflicts: list[str]
     current_question: str
     current_question_field: str
+    # Conversational memory
+    asked_fields: list[str]
+    answered_fields: list[str]
+    question_history: list[dict[str, str]]
     latest_user_response: str
     turn_count: int
     max_turns: int
@@ -43,7 +47,6 @@ class CIAPState(TypedDict, total=False):
     conversation_status: str
     session_tags: list[str]
     conversation_tag: str | None
-
 
 def build_ciap_graph(
     interview_agent: Any,

@@ -85,10 +85,10 @@ class OpenAIClientAdapter:
 
         if "self-employed" in lowered:
             fields["employment_status"] = "self-employed"
-        elif "employed" in lowered:
-            fields["employment_status"] = "employed"
         elif "unemployed" in lowered:
             fields["employment_status"] = "unemployed"
+        elif "employed" in lowered:
+            fields["employment_status"] = "employed"
 
         return json.dumps(
             {
@@ -97,5 +97,3 @@ class OpenAIClientAdapter:
                 "issues": [f"Fallback extraction used: {reason}"],
             }
         )
-        
-        

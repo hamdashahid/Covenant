@@ -137,11 +137,10 @@ class ExtractionValidationNode:
             if value is not None:
                 inferred["down_payment"] = value
 
-        # Property type inference: look for keywords
-        if re.search(r"home|house|resid|live in|residential", response.lower()):
-            inferred["property_type"] = "residential"
-        elif re.search(r"shop|store|commercial|business|office|warehouse", response.lower()):
-            inferred["property_type"] = "commercial"
+        if re.search(r"saved up|saved so far|how much have you saved|total savings", question):
+            value = self._parse_float(response)
+            if value is not None:
+                inferred["total_savings"] = value
 
         return inferred
 
@@ -172,8 +171,12 @@ class ExtractionValidationNode:
 
         if "employment_status" in fields:
             value = str(fields["employment_status"]).strip().lower()
-            if value:
-                validated["employment_status"] = value
+            if re.search(r"self.?employ", value):
+                validated["employment_status"] = "self-employed"
+            elif re.search(r"\bunemploy|out of work|no job|not working|jobless\b", value):
+                validated["employment_status"] = "unemployed"
+            elif re.search(r"\bemploy|full.?time|part.?time|working\b", value):
+                validated["employment_status"] = "employed"
             else:
                 issues.append("employment_status is invalid")
 
@@ -204,6 +207,13 @@ class ExtractionValidationNode:
                 validated["down_payment"] = value
             else:
                 issues.append("down_payment must be >= 0")
+
+        if "total_savings" in fields:
+            value = self._parse_float(fields["total_savings"])
+            if value is not None and value >= 0:
+                validated["total_savings"] = value
+            else:
+                issues.append("total_savings must be >= 0")
 
         return validated, issues
 
