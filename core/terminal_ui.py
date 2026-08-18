@@ -139,27 +139,71 @@ def print_tag_view(store: Any) -> None:
             print(f"  - {conversation['session_id']} [{status}]")
 
 
+def _conversational_message(status: str, report: dict[str, Any] | None) -> tuple[str, str | None]:
+    """Build a short, human, Sir's-bot-style message instead of a rule-by-rule audit.
+
+    Returns (main_message, follow_up_question_or_None).
+    """
+    rule_breakdown = (report or {}).get("rule_breakdown", [])
+    failed = [r["name"] for r in rule_breakdown if not r.get("passed")]
+
+    if status == "Eligible":
+        return (
+            "Great news! Based on everything you've shared, you check all our "
+            "boxes — your income, credit, and job stability all look solid for "
+            "moving forward.",
+            None,
+        )
+
+    if status == "Ineligible":
+        failed_set = set(failed)
+        if "Annual Income" in failed_set and "Credit Score" in failed_set:
+            reason = "your income and credit score are the two areas holding you back right now"
+        elif "Credit Score" in failed_set:
+            reason = "your credit score is the main thing holding you back right now"
+        elif "Annual Income" in failed_set:
+            reason = "your income is a bit below what's typically needed"
+        elif "Debt-to-Income Ratio" in failed_set:
+            reason = "your monthly debt relative to your income is a bit higher than lenders typically allow"
+        elif "Employment Status" in failed_set or "Job Stability" in failed_set:
+            reason = "your employment history is the main gap right now"
+        elif "Loan-to-Value Ratio" in failed_set:
+            reason = "the loan amount relative to the property's value is a bit high"
+        elif "Down Payment" in failed_set:
+            reason = "your down payment is a bit below what's typically required"
+        else:
+            reason = "a couple of areas in your profile need a bit more work"
+
+        return (
+            f"I've gone through your details, and {reason} — but that's usually "
+            "fixable with a bit of time or a stronger profile.",
+            "Would you like a few tips on what could help before we revisit this together?",
+        )
+
+    return (None, None)
+
+
 def print_final_result(status: str, summary: str, profile: dict[str, Any], report: dict[str, Any] | None = None) -> None:
     width = _width()
 
     if status == "Eligible":
         color = Fore.GREEN
-        headline = "GOOD NEWS — YOU LOOK ELIGIBLE"
-        icon = "✅"
+        headline = "GOOD NEWS — YOU ARE ELIGIBLE"
+        icon = "\u2705"
     elif status == "Ineligible":
         color = Fore.RED
         headline = "NOT ELIGIBLE YET"
-        icon = "❌"
+        icon = "\u274c"
     elif status == "Stopped by User":
         color = Fore.MAGENTA
         headline = "CONVERSATION ENDED BY USER"
-        icon = "🛑"
+        icon = "\U0001f6d1"
     else:
         color = Fore.YELLOW
         headline = "MORE INFORMATION NEEDED"
-        icon = "⚠️"
+        icon = "\u26a0\ufe0f"
 
-    # ---- Missing-info case: no rule breakdown available ----
+    # ---- Missing-info / stopped case: no rule breakdown available ----
     if not report or "rule_breakdown" not in report:
         print()
         print(color + Style.BRIGHT + "=" * width)
@@ -176,82 +220,16 @@ def print_final_result(status: str, summary: str, profile: dict[str, Any], repor
     print(color + Style.BRIGHT + f"{icon}  {headline}".center(width))
     print(color + Style.BRIGHT + "=" * width + Style.RESET_ALL)
 
-    # ---- Plain-English opening paragraph ----
-    passed_count = sum(1 for r in report["rule_breakdown"] if r["passed"])
-    total_count = len(report["rule_breakdown"])
+    # ---- Conversational message + call-to-action (Sir's-bot style) ----
+    message, follow_up = _conversational_message(status, report)
     print()
-    if status == "Eligible":
-        print(
-            Style.BRIGHT
-            + f"Your application passed all {total_count} eligibility checks. "
-            + "Based on the numbers you provided, you meet the lender's requirements "
-            + "for income, debt, credit, job stability, and the loan itself."
-            + Style.RESET_ALL
-        )
-    else:
-        print(
-            Style.BRIGHT
-            + f"Your application passed {passed_count} out of {total_count} eligibility checks. "
-            + "A few areas below need improvement before you'd typically qualify — "
-            + "see exactly which ones and why."
-            + Style.RESET_ALL
-        )
-        print(
-            Style.BRIGHT
-            + "These are commonly fixable with time or a stronger profile, so a few focused "
-            + "changes could make a real difference."
-            + Style.RESET_ALL
-        )
-
-    # ---- Rule-by-rule breakdown ----
-    print()
-    print(Fore.BLUE + Style.BRIGHT + "-" * width)
-    print(Fore.BLUE + Style.BRIGHT + "Rule-by-Rule Breakdown".center(width))
-    print(Fore.BLUE + Style.BRIGHT + "-" * width + Style.RESET_ALL)
-
-    metrics = report.get("metrics", {})
-    bar_map = {
-        "Debt-to-Income Ratio": (metrics.get("dti_ratio", 0), 0.43),
-        "Loan-to-Value Ratio": (metrics.get("ltv_ratio", 0), 0.95),
-    }
-
-    for rule in report["rule_breakdown"]:
-        mark = (Fore.GREEN + Style.BRIGHT + "✔ PASS" + Style.RESET_ALL) if rule["passed"] else (
-            Fore.RED + Style.BRIGHT + "✘ FAIL" + Style.RESET_ALL
-        )
+    if message:
+        print(Style.BRIGHT + message + Style.RESET_ALL)
+    if follow_up:
         print()
-        print(f"  {mark}  " + Style.BRIGHT + rule["name"] + Style.RESET_ALL)
-        print(f"        Your value : {Fore.YELLOW}{rule['value_display']}{Style.RESET_ALL}")
-        print(f"        Requirement: {Style.DIM}{rule['threshold_display']}{Style.RESET_ALL}")
-        if rule["name"] in bar_map:
-            value, threshold = bar_map[rule["name"]]
-            print(f"        {_bar(value / threshold if threshold else 0, good=rule['passed'])}")
-        # word-wrap the explanation to keep it readable
-        explanation = rule["explanation"]
-        indent = "        "
-        line = indent
-        for word in explanation.split():
-            if len(line) + len(word) + 1 > width:
-                print(line)
-                line = indent + word
-            else:
-                line += (" " if line != indent else "") + word
-        print(line)
+        print(follow_up)
 
     print()
-    print(Fore.BLUE + Style.BRIGHT + "-" * width + Style.RESET_ALL)
-
-    # ---- Final verdict box ----
-    print()
-    print(color + Style.BRIGHT + "=" * width)
-    print(color + Style.BRIGHT + f"FINAL VERDICT: {status.upper()}".center(width))
-    print(color + Style.BRIGHT + "=" * width + Style.RESET_ALL)
-
-    if status != "Eligible":
-        failed = [r["name"] for r in report["rule_breakdown"] if not r["passed"]]
-        print()
-        print(Style.BRIGHT + "What would help most:" + Style.RESET_ALL)
-        for name in failed:
-            print(f"  • Improve: {Fore.YELLOW}{name}{Style.RESET_ALL}")
+    print(color + "=" * width + Style.RESET_ALL)
 
     print_summary(profile)
