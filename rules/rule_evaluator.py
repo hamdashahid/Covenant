@@ -271,6 +271,7 @@ class RuleEvaluator:
                 "down_payment_percent": round(down_payment_percent, 4) if down_payment_percent is not None else None,
             },
         }
-
+def check():
+    pass
 
        
