@@ -273,5 +273,4 @@ class RuleEvaluator:
         }
 
 
-def check():
-    pass       
+       
