@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from core.context_builder import ContextBuilder
 from core.profile_updater import ProfileUpdater
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractionValidationNode:
@@ -89,7 +92,22 @@ class ExtractionValidationNode:
         except (TypeError, ValueError, OverflowError):
             return None
 
-    def _infer_fields_from_question(self, raw: str, latest_question: str) -> dict[str, Any]:
+    def _normalize_employment_status(self, value: Any) -> str | None:
+        """Map explicit, everyday employment descriptions to rule values."""
+        text = str(value or "").strip().lower()
+        if not text:
+            return None
+        if re.search(r"\b(self[ -]?employ\w*|freelanc\w*|contractor|own (?:a )?business|business owner)\b", text):
+            return "self-employed"
+        if re.search(r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|unemploy\w*|out of work|no job|jobless)\b", text):
+            return "unemployed"
+        if re.search(r"\b(employ\w*|full[ -]?time|part[ -]?time|working)\b", text):
+            return "employed"
+        return None
+
+    def _infer_fields_from_question(
+        self, raw: str, latest_question: str, current_field: str | None = None
+    ) -> dict[str, Any]:
         response = str(raw or "").strip()
         question = str(latest_question or "").lower()
         inferred: dict[str, Any] = {}
@@ -97,47 +115,47 @@ class ExtractionValidationNode:
         if not response:
             return inferred
 
-        if re.search(r"annual income|income", question):
+        if current_field == "annual_income" or re.search(r"annual income|income", question):
             value = self._parse_float(response)
             if value is not None:
                 inferred["annual_income"] = value
 
-        if re.search(r"monthly debt|debt payment|debt", question):
+        if current_field == "monthly_debt" or re.search(r"monthly debt|debt payment|debt", question):
             value = self._parse_float(response)
             if value is not None:
                 inferred["monthly_debt"] = value
 
-        if re.search(r"credit score|score", question):
+        if current_field == "credit_score" or re.search(r"credit score|score", question):
             value = self._parse_int(response)
             if value is not None:
                 inferred["credit_score"] = value
 
-        if re.search(r"employment status", question):
-            normalized = response.lower()
-            if normalized in {"employed", "self-employed", "unemployed"}:
+        if current_field == "employment_status" or re.search(r"employment status", question):
+            normalized = self._normalize_employment_status(response)
+            if normalized:
                 inferred["employment_status"] = normalized
 
-        if re.search(r"years|how long have you been|current job|business", question):
+        if current_field == "employment_years" or re.search(r"years|how long have you been|current job|business", question):
             value = self._parse_float(response)
             if value is not None:
                 inferred["employment_years"] = value
 
-        if re.search(r"property value|value of the property|property you want|price of the property", question):
+        if current_field == "property_value" or re.search(r"property value|value of the property|property you want|price of the property", question):
             value = self._parse_float(response)
             if value is not None:
                 inferred["property_value"] = value
 
-        if re.search(r"loan amount|how much loan|requesting|loan you're requesting|loan you want", question):
+        if current_field == "requested_loan_amount" or re.search(r"loan amount|how much loan|requesting|loan you're requesting|loan you want", question):
             value = self._parse_float(response)
             if value is not None:
                 inferred["requested_loan_amount"] = value
 
-        if re.search(r"down payment|pay upfront|down payment", question):
+        if current_field == "down_payment" or re.search(r"down payment|pay upfront", question):
             value = self._parse_float(response)
             if value is not None:
                 inferred["down_payment"] = value
 
-        if re.search(r"saved up|saved so far|how much have you saved|total savings", question):
+        if current_field == "total_savings" or re.search(r"saved up|saved so far|how much have you saved|total savings", question):
             value = self._parse_float(response)
             if value is not None:
                 inferred["total_savings"] = value
@@ -170,13 +188,9 @@ class ExtractionValidationNode:
                 issues.append("credit_score must be between 300 and 850")
 
         if "employment_status" in fields:
-            value = str(fields["employment_status"]).strip().lower()
-            if re.search(r"self.?employ", value):
-                validated["employment_status"] = "self-employed"
-            elif re.search(r"\bunemploy|out of work|no job|not working|jobless\b", value):
-                validated["employment_status"] = "unemployed"
-            elif re.search(r"\bemploy|full.?time|part.?time|working\b", value):
-                validated["employment_status"] = "employed"
+            normalized = self._normalize_employment_status(fields["employment_status"])
+            if normalized:
+                validated["employment_status"] = normalized
             else:
                 issues.append("employment_status is invalid")
 
@@ -244,21 +258,26 @@ class ExtractionValidationNode:
             raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
             extraction_failed = False
         except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("LLM extraction failed")
             raw = json.dumps(
                 {
                     "fields": {},
                     "confidence": 0.0,
-                    "issues": [f"LLM extraction failed: {exc}"],
+                    "issues": ["LLM extraction failed; deterministic fallback unavailable"],
                 }
             )
             extraction_failed = True
         fields, confidence, parse_issues = self._parse_response(raw)
         validated_fields, validation_issues = self._coerce_and_validate(fields)
 
-        if not extraction_failed and (confidence < 0.30 or (not validated_fields and not parse_issues)):
+        # The deterministic field-specific reader is especially important in
+        # degraded mode: the provider fallback only sees the answer text and
+        # cannot always know which question is currently being answered.
+        if confidence < 0.30 or not validated_fields:
             inferred_fields = self._infer_fields_from_question(
                 state.get("latest_user_response", ""),
                 state.get("current_question", ""),
+                state.get("current_question_field"),
             )
             inferred_validated, inferred_issues = self._coerce_and_validate(inferred_fields)
             if inferred_validated and not validated_fields:
@@ -276,6 +295,11 @@ class ExtractionValidationNode:
         )
 
         state["applicant_profile"] = merged
+        answered_fields = list(state.get("answered_fields", []))
+        for field in validated_fields:
+            if field not in answered_fields:
+                answered_fields.append(field)
+        state["answered_fields"] = answered_fields
         state["profile_conflicts"] = list(state.get("profile_conflicts", [])) + conflicts
         state["last_extraction"] = {
             "raw": raw,

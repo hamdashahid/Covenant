@@ -134,6 +134,34 @@ class InterviewAgent:
             "about your situation?"
         )
 
+    def _clarifying_question(self, field: str | None) -> str:
+        """Give a concrete answer to a field question without repeating it verbatim."""
+        examples = {
+            "down_payment": "I mean the amount you could pay upfront toward the home price — even a rough amount is helpful.",
+            "credit_score": "I mean the three-digit score from your credit report; an approximate range is fine if you do not know the exact number.",
+            "employment_status": "I just need to know whether you are currently employed, self-employed, or not working — retirement or pension income counts as not working for this check.",
+            "employment_years": "I mean how long you have been in your current job or business; a rough number of years is fine.",
+            "annual_income": "I mean your total yearly income before tax; a rough annual amount is fine.",
+            "total_savings": "I mean all savings you have set aside, separate from the amount you plan to use as a down payment.",
+        }
+        return examples.get(field, "Could you tell me a little more about that?")
+
+    def _detect_clarifying_question(self, text: str | None) -> bool:
+        """Recognize a request to explain the current question, not an answer."""
+        cleaned = (text or "").strip().lower()
+        if not cleaned or len(cleaned) > 120:
+            return False
+        patterns = (
+            r"^(what|which) (?:do you mean|range|amount|one)\b",
+            r"^(?:like )?what\??$",
+            r"^how (?:much|many|do you mean)\b",
+            r"^(?:can|could) you (?:explain|clarify)\b",
+            r"^in which range\b",
+            r"^what (?:kind|sort)\b",
+            r"^i(?:'m| am) not sure what you mean\b",
+        )
+        return any(re.search(pattern, cleaned) for pattern in patterns)
+
     # ================================================================
     # GREETING / STOP DETECTION
     # ================================================================
@@ -307,6 +335,7 @@ class InterviewAgent:
         # ============================================================
 
         if followup_field:
+            clarification_context = state.get("clarification_context", "")
             instruction = f"""
 The applicant needs clarification about exactly this topic:
 
@@ -324,6 +353,9 @@ Do not ask a second unrelated question.
 
 Acknowledge the previous answer briefly and naturally,
 then ask for the missing clarification.
+
+If the applicant asked what the question means, answer that question directly
+before asking for the value. Their clarification request was: {clarification_context}
 """
 
         elif is_first_turn:
@@ -659,7 +691,9 @@ STRICT RULES:
         # FALLBACK
         # ============================================================
 
-        if not question:
+        if state.get("clarification_context"):
+            question = self._clarifying_question(target_field)
+        elif not question:
 
             base_question = (
                 self._static_question(
@@ -912,6 +946,20 @@ STRICT RULES:
 
             return state
 
+        if self._detect_clarifying_question(user_response):
+            history.append({"role": "assistant", "content": question})
+            history.append({"role": "user", "content": user_response})
+            state["conversation_history"] = history
+            state["current_question"] = question
+            state["current_question_field"] = target_field or "general"
+            state["latest_user_response"] = user_response
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["skip_extraction"] = True
+            state["needs_followup"] = True
+            state["followup_field"] = target_field
+            state["clarification_context"] = user_response
+            return state
+
         # ============================================================
         # USER WANTS TO FINALIZE
         # ============================================================
@@ -983,6 +1031,14 @@ STRICT RULES:
         # ============================================================
         # NORMAL TURN
         # ============================================================
+
+        # A previous greeting or clarification may have skipped extraction.  It
+        # applies only to that one turn, never to the next genuine answer.
+        state["skip_extraction"] = False
+        # LangGraph merges node updates with the existing state; assigning an
+        # empty value is reliable across route-backs, while deleting a key is
+        # not guaranteed to clear the persisted state.
+        state["clarification_context"] = ""
 
         if not history and self.system_prompt:
             history.append(

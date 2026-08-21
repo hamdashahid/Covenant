@@ -8,3 +8,7 @@ core.db
 .vscode/
 .DS_Store
 .env
+.coverage
+tmp_verify.py
+tmp_tags_check.py
+test_errors.txt

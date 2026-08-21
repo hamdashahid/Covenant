@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import logging
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -47,6 +46,7 @@ class CIAPState(TypedDict, total=False):
     conversation_status: str
     session_tags: list[str]
     conversation_tag: str | None
+    clarification_context: str
 
 def build_ciap_graph(
     interview_agent: Any,

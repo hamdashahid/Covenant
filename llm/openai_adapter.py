@@ -83,11 +83,11 @@ class OpenAIClientAdapter:
         if score_match:
             fields["credit_score"] = int(score_match.group(1))
 
-        if "self-employed" in lowered:
+        if re.search(r"\b(self[ -]?employ\w*|freelanc\w*|contractor|own (?:a )?business|business owner)\b", lowered):
             fields["employment_status"] = "self-employed"
-        elif "unemployed" in lowered:
+        elif re.search(r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|unemploy\w*|out of work|no job|jobless)\b", lowered):
             fields["employment_status"] = "unemployed"
-        elif "employed" in lowered:
+        elif re.search(r"\b(employ\w*|full[ -]?time|part[ -]?time|working)\b", lowered):
             fields["employment_status"] = "employed"
 
         return json.dumps(

@@ -134,7 +134,10 @@ def main() -> None:
             if "Fallback extraction used:" in str(issue)
         ]
         if fallback_issues:
-            terminal_ui.print_error(f"OpenAI API degraded mode: {fallback_issues[-1]}")
+            terminal_ui.print_error(
+                "The service is temporarily unavailable, so I am using a limited local "
+                "reader. Please answer with a clear amount or status where possible."
+            )
         session_manager.save_state(session_id, updated_state, completed=False)
 
     def on_completed(updated_state: dict) -> None:

@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from typing import Any
+
+
+# Windows consoles may use a legacy code page.  Replace unavailable glyphs
+# instead of letting presentation formatting abort a completed interview.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="replace")
 
 from colorama import Fore, Style
 from colorama import init as colorama_init
