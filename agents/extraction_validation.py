@@ -97,7 +97,9 @@ class ExtractionValidationNode:
         text = str(value or "").strip().lower()
         if not text:
             return None
-        if re.search(r"\b(self[ -]?employ\w*|freelanc\w*|contractor|own (?:a )?business|business owner)\b", text):
+        if re.fullmatch(r"self(?:[ -]+emplo\w*)?|business[ -]?man", text):
+            return "self-employed"
+        if re.search(r"\b(self[ -]?employ\w*|freelanc\w*|contractor|business[ -]?man|own (?:a )?business|business owner)\b", text):
             return "self-employed"
         if re.search(r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|unemploy\w*|out of work|no job|jobless)\b", text):
             return "unemployed"
@@ -135,7 +137,7 @@ class ExtractionValidationNode:
             if normalized:
                 inferred["employment_status"] = normalized
 
-        if current_field == "employment_years" or re.search(r"years|how long have you been|current job|business", question):
+        if (current_field == "employment_years" or re.search(r"years|how long have you been|current job|business", question)) and not re.search(r"\d\s*/\s*\d", response):
             value = self._parse_float(response)
             if value is not None:
                 inferred["employment_years"] = value
@@ -161,6 +163,36 @@ class ExtractionValidationNode:
                 inferred["total_savings"] = value
 
         return inferred
+
+    def _limit_fields_to_latest_answer(
+        self,
+        fields: dict[str, Any],
+        response: str,
+        current_field: str | None,
+    ) -> dict[str, Any]:
+        """Prevent a model from copying unrelated values out of prior context."""
+        if current_field not in self.extraction_schema:
+            return fields
+
+        text = str(response or "").lower()
+        explicit_patterns = {
+            "annual_income": r"\b(?:annual income|income|earn|salary)\b",
+            "monthly_debt": r"\b(?:monthly debt|debt|repayment)\b",
+            "credit_score": r"\b(?:credit|score)\b",
+            "employment_status": r"\b(?:employed|self[ -]?employed|unemployed|retired|working|jobless)\b",
+            "employment_years": r"\b(?:years?|months?|job|business)\b",
+            "property_value": r"\b(?:property|house|home|purchase price)\b",
+            "requested_loan_amount": r"\b(?:loan|borrow)\b",
+            "down_payment": r"\b(?:down payment|put down|upfront)\b",
+            "total_savings": r"\b(?:savings?|saved)\b",
+        }
+        allowed = {current_field}
+        allowed.update(
+            field
+            for field, pattern in explicit_patterns.items()
+            if re.search(pattern, text)
+        )
+        return {field: value for field, value in fields.items() if field in allowed}
 
     def _coerce_and_validate(self, fields: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         validated: dict[str, Any] = {}
@@ -258,7 +290,7 @@ class ExtractionValidationNode:
             raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
             extraction_failed = False
         except Exception as exc:  # pragma: no cover - defensive guard
-            logger.exception("LLM extraction failed")
+            logger.debug("LLM extraction failed", exc_info=True)
             raw = json.dumps(
                 {
                     "fields": {},
@@ -268,6 +300,20 @@ class ExtractionValidationNode:
             )
             extraction_failed = True
         fields, confidence, parse_issues = self._parse_response(raw)
+        current_field = state.get("current_question_field")
+        fields = self._limit_fields_to_latest_answer(
+            fields,
+            state.get("latest_user_response", ""),
+            current_field,
+        )
+
+        if current_field == "employment_years" and re.search(
+            r"\d\s*/\s*\d",
+            str(state.get("latest_user_response", "")),
+        ):
+            fields.pop("employment_years", None)
+            parse_issues.append("employment_years is ambiguous")
+
         validated_fields, validation_issues = self._coerce_and_validate(fields)
 
         # The deterministic field-specific reader is especially important in
@@ -285,6 +331,9 @@ class ExtractionValidationNode:
                 validation_issues = inferred_issues
             elif not confidence < 0.30:
                 validation_issues.extend(inferred_issues)
+
+        if current_field == "employment_status" and "employment_status" not in validated_fields:
+            validation_issues.append("employment_status is invalid")
 
         if confidence < 0.30:
             validation_issues.append("Extraction confidence too low")

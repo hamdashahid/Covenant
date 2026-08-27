@@ -28,27 +28,39 @@ except Exception:
 DEFAULT_POLICY = [
     {
         "field": "down_payment",
-        "question": "Is a down payment your biggest hurdle right now? If so, roughly how much are you able to put down?",
+        "question": "Roughly how much would you be able to put toward a down payment?",
     },
     {
         "field": "credit_score",
-        "question": "What is your credit score?",
+        "question": "Do you know your approximate credit score?",
     },
     {
         "field": "employment_status",
-        "question": "What is your current employment status (employed / self-employed / unemployed)?",
+        "question": "Are you currently employed, self-employed, or between jobs?",
     },
     {
         "field": "employment_years",
-        "question": "How many years have you been at your current job or business?",
+        "question": "How long have you been in your current job or business?",
     },
     {
         "field": "annual_income",
-        "question": "What is your annual income (in your local currency)?",
+        "question": "Roughly what do you earn in a year before tax?",
     },
     {
         "field": "total_savings",
-        "question": "How much have you saved up so far, in total?",
+        "question": "Separate from the down payment, roughly how much do you have in savings?",
+    },
+    {
+        "field": "monthly_debt",
+        "question": "About how much do you pay each month toward debts?",
+    },
+    {
+        "field": "property_value",
+        "question": "What price range are you considering for the property?",
+    },
+    {
+        "field": "requested_loan_amount",
+        "question": "Roughly how much would you need to borrow?",
     },
 ]
 SYSTEM_PROMPT_PATH = Path("config") / "prompts_system_prompt.txt"
@@ -128,16 +140,6 @@ def main() -> None:
             conflicts=updated_state.get("profile_conflicts", []),
         )
         store.replace_messages(session_id=session_id, messages=updated_state.get("conversation_history", []))
-        fallback_issues = [
-            issue
-            for issue in updated_state.get("last_extraction", {}).get("issues", [])
-            if "Fallback extraction used:" in str(issue)
-        ]
-        if fallback_issues:
-            terminal_ui.print_error(
-                "The service is temporarily unavailable, so I am using a limited local "
-                "reader. Please answer with a clear amount or status where possible."
-            )
         session_manager.save_state(session_id, updated_state, completed=False)
 
     def on_completed(updated_state: dict) -> None:

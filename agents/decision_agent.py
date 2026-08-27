@@ -346,6 +346,8 @@ class DecisionAgent:
     def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         profile = state.get("applicant_profile", {})
         missing = [field for field in REQUIRED_FIELDS if field not in profile]
+        skipped_fields = set(state.get("skipped_fields", []))
+        actionable_missing = [field for field in missing if field not in skipped_fields]
         max_turns = int(state.get("max_turns", 8))
         turn_count = int(state.get("turn_count", 0))
 
@@ -400,8 +402,8 @@ class DecisionAgent:
             state["conversation_tag"] = self._derive_conversation_tag(deterministic_report, state)
             return state
 
-        if missing and turn_count < max_turns:
-            state["followup_field"] = missing[0]
+        if actionable_missing and turn_count < max_turns:
+            state["followup_field"] = actionable_missing[0]
             state["needs_followup"] = True
             state["decision_status"] = "Requires More Info"
             state["decision_summary"] = f"Need more validated information: missing {', '.join(missing)}"
@@ -415,6 +417,27 @@ class DecisionAgent:
             state["summary"] = state["decision_summary"]
             state["qualification_category"] = "requires_more_info"
             state["conversation_status"] = "in_progress"
+            state["session_tags"] = self._derive_session_tags(report, state)
+            state["conversation_tag"] = self._derive_conversation_tag(report, state)
+            return state
+
+        if missing and not actionable_missing:
+            state["followup_field"] = None
+            state["needs_followup"] = False
+            state["decision_status"] = "Requires More Info"
+            state["decision_summary"] = (
+                "The pre-check could not be completed because some questions were skipped."
+            )
+            report = {
+                "status": state["decision_status"],
+                "summary": state["decision_summary"],
+                "missing_fields": missing,
+            }
+            state["final_report"] = report
+            state["lead_step"] = "finalized"
+            state["summary"] = state["decision_summary"]
+            state["qualification_category"] = "requires_more_info"
+            state["conversation_status"] = "completed"
             state["session_tags"] = self._derive_session_tags(report, state)
             state["conversation_tag"] = self._derive_conversation_tag(report, state)
             return state
@@ -452,30 +475,11 @@ class DecisionAgent:
         state["final_report"] = report
         state["session_tags"] = self._derive_session_tags(report, state)
         state["conversation_tag"] = self._derive_conversation_tag(report, state)
-        if state.get("user_confirmed_early_end"):
-            state["needs_followup"] = False
-            state["followup_field"] = None
-            state["session_tags"] = self._derive_session_tags(report, state)
-            return state
-        try:
-            passed_count = sum(1 for r in report.get("rule_breakdown", []) if r.get("passed"))
-            total = max(1, len(report.get("rule_breakdown", [])))
-            pass_ratio = passed_count / total
-        except Exception:
-            pass_ratio = 0.0
-
-        if pass_ratio >= self.early_auto_pass_ratio:
-            state["offer_early_termination"] = False
-            state["auto_terminated"] = True
-            state["needs_followup"] = False
-        elif pass_ratio >= self.early_offer_pass_ratio:
-            state["offer_early_termination"] = True
-            state["auto_terminated"] = False
-            state["needs_followup"] = True
-            state["early_termination_pass_ratio"] = pass_ratio
-        else:
-            state["offer_early_termination"] = False
-            state["auto_terminated"] = False
+        # All required interview answers are present, so show the result
+        # directly instead of adding a redundant confirmation turn.
+        state["offer_early_termination"] = False
+        state["auto_terminated"] = True
+        state["needs_followup"] = False
         state["session_tags"] = self._derive_session_tags(report, state)
         state["conversation_tag"] = self._derive_conversation_tag(report, state)
         return state

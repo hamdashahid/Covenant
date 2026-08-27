@@ -83,7 +83,7 @@ class OpenAIClientAdapter:
         if score_match:
             fields["credit_score"] = int(score_match.group(1))
 
-        if re.search(r"\b(self[ -]?employ\w*|freelanc\w*|contractor|own (?:a )?business|business owner)\b", lowered):
+        if re.fullmatch(r"\s*(?:self(?:[ -]+emplo\w*)?|business[ -]?man)\s*", lowered) or re.search(r"\b(self[ -]?employ\w*|freelanc\w*|contractor|business[ -]?man|own (?:a )?business|business owner)\b", lowered):
             fields["employment_status"] = "self-employed"
         elif re.search(r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|unemploy\w*|out of work|no job|jobless)\b", lowered):
             fields["employment_status"] = "unemployed"

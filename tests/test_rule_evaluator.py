@@ -167,6 +167,14 @@ class TestRuleEvaluatorEdgeCases(unittest.TestCase):
         report = self.evaluator.evaluate(profile)
         self.assertEqual(report["status"], "Ineligible")
 
+    def test_zero_down_payment_fails_without_property_value(self) -> None:
+        profile = dict(BASE_ELIGIBLE_PROFILE, down_payment=0)
+        profile.pop("property_value")
+        report = self.evaluator.evaluate(profile)
+        down_rule = next(r for r in report["rule_breakdown"] if r["name"] == "Down Payment")
+        self.assertFalse(down_rule["passed"])
+        self.assertEqual(report["status"], "Ineligible")
+
     def test_zero_property_value_treated_as_not_evaluated(self) -> None:
         # property_value present but 0 -> LTV/down-payment can't be computed;
         # those two checks should be skipped (passed=True) rather than crash

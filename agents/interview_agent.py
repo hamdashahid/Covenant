@@ -43,10 +43,15 @@ class InterviewAgent:
         self.AFFIRMATIVE = {
             "yes",
             "y",
+            "ye",
+            "yeah",
+            "yep",
+            "yup",
             "sure",
             "ok",
             "okay",
             "please",
+            "go ahead",
         }
 
         self.NEGATIVE = {
@@ -100,10 +105,11 @@ class InterviewAgent:
 
         # A field is missing when it has not yet been successfully
         # stored in the applicant profile.
+        skipped_fields = set(state.get("skipped_fields", []))
         missing = [
             field
             for field in policy_order
-            if field not in profile
+            if field not in profile and field not in skipped_fields
         ]
 
         # If a previous answer requires clarification,
@@ -120,6 +126,19 @@ class InterviewAgent:
 
         return missing, followup_field
 
+    def _detect_skip_intent(self, text: str | None) -> bool:
+        """Recognize a request to defer the current question."""
+        cleaned = re.sub(r"\s+", " ", (text or "").strip().lower())
+        return bool(
+            re.fullmatch(
+                r"(?:skip(?: this)?(?: question)?|pass|next(?: question| ques)?|"
+                r"move (?:to )?(?:the )?next(?: question| ques)?|"
+                r"ask (?:the )?next(?: question| ques)?|i (?:don'?t|do not) (?:know|want to answer))"
+                r"[.!?]*",
+                cleaned,
+            )
+        )
+
     def _static_question(
         self,
         field: str | None,
@@ -133,6 +152,102 @@ class InterviewAgent:
             "Is there anything else you'd like to add "
             "about your situation?"
         )
+
+    def _fallback_question(
+        self,
+        field: str | None,
+        state: dict[str, Any],
+        is_first_turn: bool,
+    ) -> str:
+        """Produce a natural question when conversational generation is unavailable."""
+        latest = str(state.get("latest_user_response", "")).strip().lower()
+
+        if field == "down_payment" and not re.search(r"\d", latest) and re.search(
+            r"\b(?:yes|yeah|yep|it is|is a)\b.*\b(?:hurdle|problem|issue|obstacle)\b",
+            latest,
+        ):
+            return (
+                "I understand — coming up with the down payment can be difficult. "
+                "About how much could you put down right now?"
+            )
+
+        if field == "down_payment" and re.search(
+            r"\b(?:no|not really|nope)\b.*\b(?:hurdle|problem|issue|obstacle)\b",
+            latest,
+        ):
+            return (
+                "Got it — so the down payment itself isn't your main obstacle. "
+                "Roughly how much would you be able to put down?"
+            )
+
+        question = self._static_question(field)
+        if is_first_turn:
+            return f"Hi! I'm here to help with your mortgage pre-check. {question}"
+
+        profile = state.get("applicant_profile", {}) or {}
+        if field == "credit_score" and "down_payment" in profile:
+            amount = float(profile["down_payment"])
+            shown = f"{amount:,.0f}"
+            return f"I've noted {shown} for the down payment. Do you know your approximate credit score?"
+        if field == "employment_status" and "credit_score" in profile:
+            qualifier = "rough estimate" if re.search(r"\b(?:maybe|about|around|roughly|not sure|no sure)\b", latest) else "score"
+            return f"That's helpful — I've noted {int(profile['credit_score'])} as a {qualifier}. Are you currently employed, self-employed, or between jobs?"
+        if field == "employment_years" and profile.get("employment_status"):
+            return f"Got it, you're {profile['employment_status']}. How long have you been in your current job or business?"
+        if field == "annual_income" and "employment_years" in profile:
+            years = float(profile["employment_years"])
+            shown = f"{years:g} year" + ("" if years == 1 else "s")
+            return f"Thanks — I've noted {shown} in your current work. Roughly what do you earn in a year before tax?"
+        if field == "total_savings" and "annual_income" in profile:
+            return "Thanks, that gives me a clearer picture. Separate from the down payment, roughly how much do you have in savings?"
+
+        return "Thanks, that helps. " + question
+
+    def _validation_followup_question(
+        self,
+        field: str | None,
+        state: dict[str, Any],
+    ) -> str:
+        """Explain a rejected value before asking for a corrected answer."""
+        issues = " ".join(
+            str(issue).lower()
+            for issue in state.get("last_extraction", {}).get("issues", [])
+        )
+        prompts = {
+            "credit_score": (
+                "A credit score should be a whole number between 300 and 850. "
+                "What is your score, or your best estimate?"
+            ),
+            "down_payment": (
+                "I need a non-negative amount for the down payment. "
+                "Roughly how much could you put down?"
+            ),
+            "employment_years": (
+                "The number of years can't be negative. "
+                "About how long have you been in your current job or business?"
+            ),
+            "annual_income": (
+                "I need an annual income greater than zero. "
+                "What is your approximate yearly income before tax?"
+            ),
+            "employment_status": (
+                "I didn't quite catch your work status. "
+                "Are you employed, self-employed, or currently between jobs?"
+            ),
+            "total_savings": (
+                "Savings can't be a negative amount. "
+                "Roughly how much do you currently have saved?"
+            ),
+        }
+        if field == "employment_years" and "ambiguous" in issues:
+            answer = str(state.get("latest_user_response", "")).strip()
+            return (
+                "I want to make sure I record that correctly. "
+                f"When you say '{answer}', do you mean a fraction of a year or a range of years?"
+            )
+        if field and field in issues:
+            return prompts.get(field, "That value doesn't look valid. Could you try again?")
+        return ""
 
     def _clarifying_question(self, field: str | None) -> str:
         """Give a concrete answer to a field question without repeating it verbatim."""
@@ -264,6 +379,67 @@ class InterviewAgent:
     # ================================================================
     # CONVERSATIONAL QUESTION GENERATION
     # ================================================================
+
+    def _sanitize_generated_response(
+        self,
+        response: str,
+        state: dict[str, Any],
+        is_first_turn: bool,
+    ) -> str:
+        """Enforce factual and one-question boundaries on model wording."""
+        latest = str(state.get("latest_user_response", ""))
+        if not re.search(r"[$₹£€]", latest):
+            response = re.sub(r"[$₹£€]", "", response)
+
+        if is_first_turn and re.search(
+            r"\b(?:buying|purchasing)\b.*\b(?:alone|own|someone|partner|jointly)\b",
+            response,
+            re.IGNORECASE,
+        ):
+            return (
+                "Hi there! I'm Alex, and I'm here to help with your mortgage pre-check. "
+                "Will this be your first home?"
+            )
+
+        # Keep only the final question when the model produces multiple ones.
+        # Earlier question sentences are conversational extras; the last one
+        # is the application-selected mortgage topic.
+        if response.count("?") > 1:
+            parts = re.split(r"(?<=\?)\s+", response)
+            question_indexes = [index for index, part in enumerate(parts) if "?" in part]
+            keep_question = question_indexes[-1]
+            parts = [
+                part
+                for index, part in enumerate(parts)
+                if "?" not in part or index == keep_question
+            ]
+            response = " ".join(parts)
+
+        return response.strip()
+
+    def _response_matches_target(
+        self,
+        response: str,
+        target_field: str | None,
+        is_first_turn: bool,
+    ) -> bool:
+        """Reject model questions that drift away from the selected topic."""
+        text = response.lower()
+        if is_first_turn:
+            return "first home" in text
+        patterns = {
+            "down_payment": r"\b(?:down payment|put down|upfront)\b",
+            "credit_score": r"\b(?:credit|score)\b",
+            "employment_status": r"\b(?:employ|working|work status|job status|between jobs)\b",
+            "employment_years": r"\b(?:how long|years?|months?|job|business)\b",
+            "annual_income": r"\b(?:annual income|income|earn|make each year|yearly)\b",
+            "total_savings": r"\b(?:savings?|saved)\b",
+            "monthly_debt": r"\b(?:debt|monthly payments?|repayments?)\b",
+            "property_value": r"\b(?:property|home|house|purchase price)\b",
+            "requested_loan_amount": r"\b(?:loan|borrow)\b",
+        }
+        pattern = patterns.get(target_field or "")
+        return bool(pattern and re.search(pattern, text))
 
     def _generate_conversational_question(
         self,
@@ -474,11 +650,19 @@ STRICT RULES:
             if not response:
                 return ""
 
+            response = self._sanitize_generated_response(response, state, is_first_turn)
+            if not self._response_matches_target(response, target_field, is_first_turn):
+                logger.debug(
+                    "Discarding generated question that drifted from target field %r",
+                    target_field,
+                )
+                return ""
             return response
 
         except Exception:
-            logger.exception(
-                "Conversational question generation failed."
+            logger.debug(
+                "Conversational question generation failed.",
+                exc_info=True,
             )
             return ""
 
@@ -563,9 +747,12 @@ STRICT RULES:
             )
         )
 
-        is_first_turn = not any(
-            message.get("role") == "assistant"
-            for message in history
+        is_first_turn = (
+            not state.get("applicant_profile")
+            and not any(
+                message.get("role") == "assistant"
+                for message in history
+            )
         )
 
         # ============================================================
@@ -582,9 +769,8 @@ STRICT RULES:
         ):
 
             confirm_q = (
-                "I can already reach a likely conclusion "
-                "based on what you've provided. "
-                "Would you like me to finalize now? (yes/no)"
+                "I have enough information to complete your pre-check. "
+                "Would you like me to show you the result now?"
             )
 
             terminal_ui.print_agent_message(
@@ -637,24 +823,6 @@ STRICT RULES:
             state["current_question"] = confirm_q
             state["latest_user_response"] = confirm_resp
 
-            if any(
-                pattern.match(
-                    confirm_resp.strip()
-                )
-                for pattern in self.FINALIZE_PATTERNS
-            ):
-                state[
-                    "user_requested_finalize"
-                ] = True
-
-                state["needs_followup"] = False
-                state["followup_field"] = None
-                state[
-                    "offer_early_termination"
-                ] = False
-
-                return state
-
             if (
                 confirm_resp.lower()
                 in self.AFFIRMATIVE
@@ -663,6 +831,18 @@ STRICT RULES:
                     "user_confirmed_early_end"
                 ] = True
                 state["needs_followup"] = False
+
+            elif (
+                confirm_resp.lower() not in self.NEGATIVE
+                and any(
+                    pattern.match(confirm_resp.strip())
+                    for pattern in self.FINALIZE_PATTERNS
+                )
+            ):
+                state["user_requested_finalize"] = True
+                state["needs_followup"] = False
+                state["followup_field"] = None
+                state["offer_early_termination"] = False
 
             else:
                 state[
@@ -691,24 +871,27 @@ STRICT RULES:
         # FALLBACK
         # ============================================================
 
+        validation_question = self._validation_followup_question(target_field, state)
+        latest = str(state.get("latest_user_response", ""))
+        needs_contextual_down_payment_followup = (
+            target_field == "down_payment"
+            and not re.search(r"\d", latest)
+            and bool(re.search(r"\b(?:hurdle|problem|issue|obstacle)\b", latest, re.IGNORECASE))
+        )
+
         if state.get("clarification_context"):
             question = self._clarifying_question(target_field)
+        elif validation_question:
+            question = validation_question
+        elif needs_contextual_down_payment_followup:
+            question = self._fallback_question(target_field, state, is_first_turn)
         elif not question:
 
-            base_question = (
-                self._static_question(
-                    target_field
-                )
+            question = self._fallback_question(
+                target_field,
+                state,
+                is_first_turn,
             )
-
-            if is_first_turn:
-                question = (
-                    "Hi! I'm here to help with "
-                    "your mortgage pre-check. "
-                    f"{base_question}"
-                )
-            else:
-                question = base_question
 
         # ============================================================
         # TRACK EXACT TARGET FIELD
@@ -958,6 +1141,24 @@ STRICT RULES:
             state["needs_followup"] = True
             state["followup_field"] = target_field
             state["clarification_context"] = user_response
+            return state
+
+        if self._detect_skip_intent(user_response):
+            history.append({"role": "assistant", "content": question})
+            history.append({"role": "user", "content": user_response})
+            skipped_fields = list(state.get("skipped_fields", []))
+            if target_field and target_field not in skipped_fields:
+                skipped_fields.append(target_field)
+            state["skipped_fields"] = skipped_fields
+            state["conversation_history"] = history
+            state["current_question"] = question
+            state["current_question_field"] = target_field or "general"
+            state["latest_user_response"] = user_response
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["skip_extraction"] = True
+            state["needs_followup"] = True
+            state["followup_field"] = None
+            state["clarification_context"] = ""
             return state
 
         # ============================================================

@@ -12,3 +12,4 @@ core.db
 tmp_verify.py
 tmp_tags_check.py
 test_errors.txt
+.pytest-tmp/

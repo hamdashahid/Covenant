@@ -156,9 +156,10 @@ def _conversational_message(status: str, report: dict[str, Any] | None) -> tuple
 
     if status == "Eligible":
         return (
-            "Great news! Based on everything you've shared, you check all our "
-            "boxes — your income, credit, and job stability all look solid for "
-            "moving forward.",
+            "Good news! Based on the information you provided, your income, "
+            "credit score, and employment history meet this pre-check's current "
+            "requirements. This is an initial assessment rather than a final "
+            "mortgage approval.",
             None,
         )
 
@@ -184,7 +185,7 @@ def _conversational_message(status: str, report: dict[str, Any] | None) -> tuple
         return (
             f"I've gone through your details, and {reason} — but that's usually "
             "fixable with a bit of time or a stronger profile.",
-            "Would you like a few tips on what could help before we revisit this together?",
+            None,
         )
 
     return (None, None)

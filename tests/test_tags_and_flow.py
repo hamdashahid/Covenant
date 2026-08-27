@@ -172,8 +172,8 @@ def test_graph_finalize_phrase_leads_to_decision(monkeypatch):
     assert completed.get("closed_status") == "Requires More Info"
 
 
-def test_graph_finalize_after_combined_multi_field_response(monkeypatch):
-    # Simulate a single response providing multiple fields, then a finalize phrase.
+def test_graph_finalizes_directly_after_combined_multi_field_response(monkeypatch):
+    # A single response supplies the remaining fields, so no confirmation is needed.
     responses = [
         "Property value 500000, down payment 100000, loan amount 300000",
         "No, that's all the information I have",
@@ -254,12 +254,12 @@ def test_graph_finalize_after_combined_multi_field_response(monkeypatch):
 
     assert completed.get("closed_status") == "Ineligible"
     assert final["final_report"]["status"] == "Ineligible"
-    assert final.get("user_requested_finalize") is True
+    assert final.get("user_requested_finalize") is not True
     assert final.get("needs_followup") is False
-    assert completed.get("turns") == 2
+    assert completed.get("turns") == 1
 
 
-def test_early_termination_offer_and_confirm(monkeypatch):
+def test_complete_profile_finishes_without_confirmation(monkeypatch):
     # create a decision agent with a fake evaluator that returns many passed rules
     class FakeEvaluator:
         def evaluate(self, profile):
@@ -280,20 +280,17 @@ def test_early_termination_offer_and_confirm(monkeypatch):
         "employment_years",
         "down_payment",
         "total_savings",
+        "monthly_debt",
+        "property_value",
+        "requested_loan_amount",
     ]
     state = {"applicant_profile": {f: 1 for f in required_fields}}
     updated = da(state)
-    assert updated.get("offer_early_termination") is True
-
-    # Now simulate InterviewAgent confirming the offer
-    monkeypatch.setattr("core.terminal_ui.get_answer_prompt", lambda: "yes")
-    ia = InterviewAgent([], "sys", llm_client=None)
-    updated2 = ia(updated)
-    # After confirmation, the interview agent should mark user_confirmed_early_end
-    assert updated2.get("user_confirmed_early_end") is True or updated2.get("offer_early_termination") is False
+    assert updated.get("offer_early_termination") is False
+    assert updated.get("needs_followup") is False
 
 
-def test_early_termination_offer_for_six_of_seven_rules():
+def test_complete_profile_with_failed_rule_finishes_without_confirmation():
     class FakeEvaluatorSixOfSeven:
         def evaluate(self, profile):
             return {
@@ -313,11 +310,15 @@ def test_early_termination_offer_for_six_of_seven_rules():
         "employment_years",
         "down_payment",
         "total_savings",
+        "monthly_debt",
+        "property_value",
+        "requested_loan_amount",
     ]
     state = {"applicant_profile": {f: 1 for f in required_fields}}
     updated = da(state)
-    assert updated.get("offer_early_termination") is True
-    assert updated.get("auto_terminated") is False
+    assert updated.get("offer_early_termination") is False
+    assert updated.get("auto_terminated") is True
+    assert updated.get("needs_followup") is False
 
 
 def test_greeting_is_not_treated_as_a_ciip_answer(monkeypatch):
