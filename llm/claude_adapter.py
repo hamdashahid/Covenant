@@ -56,7 +56,7 @@ class ClaudeClientAdapter:
         if score_match:
             fields["credit_score"] = int(score_match.group(1))
 
-        if "self-employed" in lowered:
+        if re.fullmatch(r"\s*(?:self(?:[ -]+emplo\w*)?|business[ -]?man)\s*", lowered) or "self-employed" in lowered:
             fields["employment_status"] = "self-employed"
         elif "unemployed" in lowered:
             fields["employment_status"] = "unemployed"

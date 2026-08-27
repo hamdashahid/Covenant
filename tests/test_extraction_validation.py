@@ -36,6 +36,30 @@ def base_state(response_text: str) -> dict:
 
 
 class TestExtractionHappyPath(unittest.TestCase):
+    def test_self_shorthand_is_understood_as_self_employed(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "What is your employment status?",
+            "current_question_field": "employment_status",
+            "latest_user_response": "self",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["employment_status"], "self-employed")
+
+    def test_business_man_is_understood_as_self_employed(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "What is your employment status?",
+            "current_question_field": "employment_status",
+            "latest_user_response": "business man",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["employment_status"], "self-employed")
+
     def test_valid_extraction_updates_profile(self) -> None:
         node = make_node({
             "fields": {
@@ -232,6 +256,45 @@ class TestExtractionConflictDetection(unittest.TestCase):
         result = node(state)
         self.assertEqual(result["applicant_profile"]["annual_income"], 60000.0)
         self.assertTrue(any("Conflict" in c for c in result["profile_conflicts"]))
+
+    def test_savings_answer_cannot_overwrite_down_payment_from_context(self) -> None:
+        node = make_node({
+            "fields": {"down_payment": 50000, "total_savings": 50000},
+            "confidence": 0.95,
+            "issues": [],
+        })
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {"down_payment": 0.0},
+            "current_question": "How much do you have in savings?",
+            "current_question_field": "total_savings",
+            "latest_user_response": "50k",
+        }
+
+        result = node(state)
+
+        self.assertEqual(result["applicant_profile"]["down_payment"], 0.0)
+        self.assertEqual(result["applicant_profile"]["total_savings"], 50000.0)
+        self.assertEqual(result["last_extraction"]["validated_fields"], {"total_savings": 50000.0})
+
+    def test_ambiguous_slash_years_requires_clarification(self) -> None:
+        node = make_node({
+            "fields": {"employment_years": 1},
+            "confidence": 0.9,
+            "issues": [],
+        })
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "How long have you been in your business?",
+            "current_question_field": "employment_years",
+            "latest_user_response": "around 1/2 years",
+        }
+
+        result = node(state)
+
+        self.assertNotIn("employment_years", result["applicant_profile"])
+        self.assertIn("employment_years is ambiguous", result["last_extraction"]["issues"])
 
 
 if __name__ == "__main__":

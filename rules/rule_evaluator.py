@@ -223,12 +223,15 @@ class RuleEvaluator:
             })
         else:
             if has_down_payment:
+                down_passed = down_payment > 0
                 rule_breakdown.append({
                     "name": "Down Payment",
-                    "passed": True,
+                    "passed": down_passed,
                     "value_display": f"Rs {down_payment:,.0f}",
                     "threshold_display": f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
                     "explanation": (
+                        "A zero down payment does not meet the minimum requirement."
+                        if not down_passed else
                         f"You've indicated a down payment of Rs {down_payment:,.0f}, but this check "
                         "could not be evaluated as a percentage because the property value was not provided."
                     ),

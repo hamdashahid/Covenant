@@ -5,6 +5,9 @@ REQUIRED_FIELDS = [
     "employment_years",
     "annual_income",
     "total_savings",
+    "monthly_debt",
+    "property_value",
+    "requested_loan_amount",
 ]
 
 EXTRACTION_SCHEMA = {

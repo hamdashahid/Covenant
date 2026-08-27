@@ -47,6 +47,7 @@ class CIAPState(TypedDict, total=False):
     session_tags: list[str]
     conversation_tag: str | None
     clarification_context: str
+    skipped_fields: list[str]
 
 def build_ciap_graph(
     interview_agent: Any,

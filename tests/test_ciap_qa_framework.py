@@ -194,7 +194,9 @@ class TestErrorHandlingAndRecovery:
             "current_question": "income",
             "latest_user_response": "I earn 100000",
         })
-        assert state["applicant_profile"] == {}
+        # Provider failures use the deterministic field reader, so a clear
+        # answer remains usable instead of being discarded.
+        assert state["applicant_profile"] == {"annual_income": 100000.0}
 
     def test_conflicting_session_state_is_not_corrupting_profile(self, session_manager: SessionManager) -> None:
         session_id, _, state = session_manager.start_or_resume(session_id=None)
