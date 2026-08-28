@@ -8,6 +8,17 @@ REQUIRED_FIELDS = [
     "monthly_debt",
 ]
 
+# Savings is useful interview context, but the current eligibility rules do
+# not use it. Skipping it must not prevent a decision once rule inputs exist.
+ELIGIBILITY_REQUIRED_FIELDS = [
+    "down_payment",
+    "credit_score",
+    "employment_status",
+    "employment_years",
+    "annual_income",
+    "monthly_debt",
+]
+
 EXTRACTION_SCHEMA = {
     "annual_income": "number (>0)",
     "monthly_debt": "number (>=0)",

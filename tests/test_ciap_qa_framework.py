@@ -40,6 +40,19 @@ class TestFunctionalConversationFlow:
         assert resumed["conversation_history"][0]["content"] == "I have a stable job"
         assert resumed["applicant_profile"]["credit_score"] == 700
 
+    def test_resume_preserves_skips_and_retry_counts(self, session_manager: SessionManager) -> None:
+        session_id, _, state = session_manager.start_or_resume(session_id=None)
+        state["skipped_fields"] = ["total_savings"]
+        state["deferred_reasons"] = {"total_savings": "refusal"}
+        state["field_attempts"] = {"credit_score": 2}
+        session_manager.save_state(session_id, state, completed=False)
+
+        _, _, resumed = session_manager.start_or_resume(session_id=session_id)
+
+        assert resumed["skipped_fields"] == ["total_savings"]
+        assert resumed["deferred_reasons"] == {"total_savings": "refusal"}
+        assert resumed["field_attempts"] == {"credit_score": 2}
+
 
 class TestBoundaryValueAnalysis:
     @pytest.mark.parametrize(

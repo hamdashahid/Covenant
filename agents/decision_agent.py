@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.schemas import REQUIRED_FIELDS
+from core.schemas import ELIGIBILITY_REQUIRED_FIELDS
 
 
 class DecisionAgent:
@@ -345,7 +345,7 @@ class DecisionAgent:
 
     def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         profile = state.get("applicant_profile", {})
-        missing = [field for field in REQUIRED_FIELDS if field not in profile]
+        missing = [field for field in ELIGIBILITY_REQUIRED_FIELDS if field not in profile]
         skipped_fields = set(state.get("skipped_fields", []))
         actionable_missing = [field for field in missing if field not in skipped_fields]
         max_turns = int(state.get("max_turns", 8))

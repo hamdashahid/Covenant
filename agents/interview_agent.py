@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 from typing import Any
 
 from core import terminal_ui
+from core.conversation_intent import Intent, classify_input
 from core.schemas import FIELD_LABELS
 
 logger = logging.getLogger(__name__)
@@ -128,25 +130,7 @@ class InterviewAgent:
 
     def _detect_skip_intent(self, text: str | None) -> bool:
         """Recognize a request to defer the current question."""
-        cleaned = re.sub(r"\s+", " ", (text or "").strip().lower())
-        refusal_patterns = (
-            r"i (?:don'?t|do not) want to (?:tell|say|share)(?: (?:it|you|u))?",
-            r"(?:i )?(?:don'?t|do not|can'?t|cannot) remember",
-            r"(?:i have )?no idea",
-            r"not (?:sure|remember)",
-            r"no[ ,_-]*pass",
-        )
-        if any(re.fullmatch(pattern + r"[.!?]*", cleaned) for pattern in refusal_patterns):
-            return True
-        return bool(
-            re.fullmatch(
-                r"(?:skip(?: this)?(?: question)?|pass|next(?: question| ques)?|"
-                r"move (?:to )?(?:the )?next(?: question| ques| quest)?|"
-                r"ask (?:the )?next(?: question| ques)?|i (?:don'?t|do not) (?:know|want to answer))"
-                r"[.!?]*",
-                cleaned,
-            )
-        )
+        return classify_input(text).intent in {Intent.SKIP, Intent.UNKNOWN, Intent.REFUSAL}
 
     def _detect_finalize_intent(
         self,
@@ -225,7 +209,7 @@ class InterviewAgent:
         if field == "credit_score" and "down_payment" in profile:
             amount = float(profile["down_payment"])
             shown = f"{amount:,.0f}"
-            return f"I've noted {shown} for the down payment. Do you know your approximate credit score?"
+            return f"I've noted {shown} for the down payment. What is your approximate credit score?"
         if field == "employment_status" and "credit_score" in profile:
             qualifier = "rough estimate" if re.search(r"\b(?:maybe|about|around|roughly|not sure|no sure)\b", latest) else "score"
             return f"That's helpful — I've noted {int(profile['credit_score'])} as a {qualifier}. Are you currently employed, self-employed, or between jobs?"
@@ -264,7 +248,7 @@ class InterviewAgent:
                 "About how long have you been in your current job or business?"
             ),
             "annual_income": (
-                "I need an annual income greater than zero. "
+                "That income amount doesn't look realistic, so I don't want to record it incorrectly. "
                 "What is your approximate yearly income before tax?"
             ),
             "employment_status": (
@@ -304,19 +288,7 @@ class InterviewAgent:
 
     def _detect_clarifying_question(self, text: str | None) -> bool:
         """Recognize a request to explain the current question, not an answer."""
-        cleaned = (text or "").strip().lower()
-        if not cleaned or len(cleaned) > 120:
-            return False
-        patterns = (
-            r"^(what|which) (?:do you mean|range|amount|one)\b",
-            r"^(?:like )?what\??$",
-            r"^how (?:much|many|do you mean)\b",
-            r"^(?:can|could) you (?:explain|clarify)\b",
-            r"^in which range\b",
-            r"^what (?:kind|sort)\b",
-            r"^i(?:'m| am) not sure what you mean\b",
-        )
-        return any(re.search(pattern, cleaned) for pattern in patterns)
+        return classify_input(text).intent == Intent.CLARIFICATION
 
     # ================================================================
     # GREETING / STOP DETECTION
@@ -384,38 +356,7 @@ class InterviewAgent:
         text: str | None,
     ) -> bool:
 
-        cleaned = (
-            text or ""
-        ).strip().lower()
-
-        if not cleaned:
-            return False
-
-        if cleaned in self.STOP_COMMANDS:
-            return True
-
-        stop_phrases = [
-            "i don't want to continue",
-            "i do not want to continue",
-            "i don't want to answer anymore",
-            "i do not want to answer anymore",
-            "please stop",
-            "don't contact me anymore",
-            "do not contact me anymore",
-            "leave me alone",
-            "i'm not interested anymore",
-            "i am not interested anymore",
-            "i don't want to continue this conversation",
-            "i do not want to continue this conversation",
-            "no longer interested",
-            "stop contacting me",
-            "end this conversation",
-        ]
-
-        return any(
-            phrase in cleaned
-            for phrase in stop_phrases
-        )
+        return classify_input(text).intent == Intent.STOP
 
     # ================================================================
     # CONVERSATIONAL QUESTION GENERATION
@@ -756,6 +697,75 @@ STRICT RULES:
 
         state["current_question_field"] = field
 
+    def _defer_field(self, state: dict[str, Any], field: str | None, reason: str) -> None:
+        """Mark one field unavailable and guarantee that the interview moves on."""
+        if not field:
+            return
+        skipped = list(state.get("skipped_fields", []))
+        if field not in skipped:
+            skipped.append(field)
+        reasons = dict(state.get("deferred_reasons", {}))
+        reasons[field] = reason
+        state["skipped_fields"] = skipped
+        state["deferred_reasons"] = reasons
+        state["followup_field"] = None
+        state["clarification_context"] = ""
+
+    def _count_unresolved(self, state: dict[str, Any], field: str | None) -> int:
+        if not field:
+            return 0
+        attempts = dict(state.get("field_attempts", {}))
+        attempts[field] = int(attempts.get(field, 0)) + 1
+        state["field_attempts"] = attempts
+        return attempts[field]
+
+    def _interpret_input(
+        self,
+        state: dict[str, Any],
+        target_field: str | None,
+        question: str,
+        user_response: str,
+    ) -> tuple[Intent, dict[str, Any]]:
+        """Use one semantic interpreter; retain deterministic control fallbacks."""
+        deterministic = classify_input(user_response)
+        # Obvious control commands must remain reliable even during API failure.
+        if deterministic.intent in {Intent.STOP, Intent.SKIP, Intent.REFUSAL, Intent.UNKNOWN, Intent.CLARIFICATION, Intent.GREETING}:
+            return deterministic.intent, {
+                "intent": deterministic.intent.value,
+                "field": target_field,
+                "value": None,
+                "confidence": 1.0,
+                "needs_clarification": deterministic.intent == Intent.CLARIFICATION,
+                "reason": "deterministic control intent",
+            }
+
+        interpreter = getattr(self.llm_client, "interpret_input", None)
+        if interpreter:
+            try:
+                result = interpreter(
+                    target_field,
+                    question,
+                    user_response,
+                    state.get("applicant_profile", {}) or {},
+                )
+                if isinstance(result, str):
+                    result = json.loads(result)
+                if isinstance(result, dict):
+                    intent = Intent(str(result.get("intent", "answer")))
+                    result["field"] = target_field
+                    return intent, result
+            except (ValueError, TypeError, json.JSONDecodeError):
+                logger.debug("Structured input interpretation was unusable", exc_info=True)
+
+        return Intent.ANSWER, {
+            "intent": "answer",
+            "field": target_field,
+            "value": None,
+            "confidence": 0.0,
+            "needs_clarification": False,
+            "reason": "offline field-specific extraction required",
+        }
+
     # ================================================================
     # MAIN AGENT
     # ================================================================
@@ -797,6 +807,26 @@ STRICT RULES:
                 for message in history
             )
         )
+
+        # Validation happens after an answer is entered. On the next graph pass,
+        # count that rejected answer once. Three rejected/unclear answers defer
+        # the field, preventing an endless re-ask loop.
+        issue_text = " ".join(str(item) for item in state.get("last_extraction", {}).get("issues", []))
+        invalid_field = state.get("current_question_field")
+        invalid_marker = f"{state.get('turn_count', 0)}:{invalid_field}:{state.get('latest_user_response', '')}"
+        if (
+            invalid_field
+            and invalid_field == target_field
+            and invalid_field in issue_text
+            and state.get("counted_invalid_response") != invalid_marker
+        ):
+            state["counted_invalid_response"] = invalid_marker
+            if self._count_unresolved(state, invalid_field) >= 3:
+                self._defer_field(state, invalid_field, "too_many_invalid_answers")
+                state["auto_deferred_field"] = invalid_field
+                state["last_extraction"] = {}
+                missing, followup_field = self._missing_fields(state)
+                target_field = missing[0] if missing else None
 
         # ============================================================
         # EARLY TERMINATION
@@ -923,7 +953,18 @@ STRICT RULES:
         )
 
         if state.get("clarification_context"):
-            question = self._clarifying_question(target_field)
+            if state.get("clarification_context") == "affirmative_without_value":
+                prompts = {
+                    "credit_score": "Great — what is your approximate credit score?",
+                    "down_payment": "Thanks — roughly how much could you put down?",
+                    "employment_years": "Thanks — about how many years have you been there?",
+                    "annual_income": "Thanks — roughly how much do you earn per year before tax?",
+                    "total_savings": "Thanks — roughly how much do you have saved?",
+                    "monthly_debt": "Thanks — roughly how much do you pay toward debts each month?",
+                }
+                question = prompts.get(target_field, self._clarifying_question(target_field))
+            else:
+                question = self._clarifying_question(target_field)
         elif validation_question:
             question = validation_question
         elif needs_contextual_down_payment_followup:
@@ -935,6 +976,11 @@ STRICT RULES:
                 state,
                 is_first_turn,
             )
+
+        auto_deferred_field = state.pop("auto_deferred_field", None)
+        if auto_deferred_field:
+            label = FIELD_LABELS.get(auto_deferred_field, auto_deferred_field).lower()
+            question = f"We can leave the {label} unanswered for now and continue. {self._fallback_question(target_field, state, False)}"
 
         # ============================================================
         # TRACK EXACT TARGET FIELD
@@ -982,11 +1028,21 @@ STRICT RULES:
             user_response or ""
         ).strip().lower()
 
-        is_stop_command = (
-            self._detect_stop_intent(
-                user_response
-            )
+        interpreted_intent, interpreted = self._interpret_input(
+            state, target_field, question, user_response
         )
+        state["interpreted_input"] = interpreted
+
+        affirmative_without_value = bool(
+            target_field in {
+                "credit_score", "down_payment", "employment_years",
+                "annual_income", "total_savings", "monthly_debt",
+            }
+            and not re.search(r"\d", cleaned)
+            and re.fullmatch(r"(?:yes|y|ye|yeah|yep|sure|yes i (?:know|kow))", cleaned)
+        )
+
+        is_stop_command = interpreted_intent == Intent.STOP
 
         is_finalize_phrase = self._detect_finalize_intent(
             user_response,
@@ -994,11 +1050,7 @@ STRICT RULES:
             target_field,
         )
 
-        is_greeting = (
-            self._detect_greeting(
-                user_response
-            )
-        )
+        is_greeting = interpreted_intent == Intent.GREETING
 
         logger.debug(
             "User response=%r cleaned=%r "
@@ -1171,7 +1223,7 @@ STRICT RULES:
 
             return state
 
-        if self._detect_clarifying_question(user_response):
+        if interpreted_intent == Intent.CLARIFICATION or affirmative_without_value:
             history.append({"role": "assistant", "content": question})
             history.append({"role": "user", "content": user_response})
             state["conversation_history"] = history
@@ -1180,18 +1232,21 @@ STRICT RULES:
             state["latest_user_response"] = user_response
             state["turn_count"] = int(state.get("turn_count", 0)) + 1
             state["skip_extraction"] = True
+            attempt = self._count_unresolved(state, target_field)
+            if attempt >= 3:
+                self._defer_field(state, target_field, "too_many_clarification_requests")
+            else:
+                state["followup_field"] = target_field
+                state["clarification_context"] = (
+                    "affirmative_without_value" if affirmative_without_value else user_response
+                )
             state["needs_followup"] = True
-            state["followup_field"] = target_field
-            state["clarification_context"] = user_response
             return state
 
-        if self._detect_skip_intent(user_response):
+        if interpreted_intent in {Intent.SKIP, Intent.UNKNOWN, Intent.REFUSAL}:
             history.append({"role": "assistant", "content": question})
             history.append({"role": "user", "content": user_response})
-            skipped_fields = list(state.get("skipped_fields", []))
-            if target_field and target_field not in skipped_fields:
-                skipped_fields.append(target_field)
-            state["skipped_fields"] = skipped_fields
+            self._defer_field(state, target_field, interpreted_intent.value)
             state["conversation_history"] = history
             state["current_question"] = question
             state["current_question_field"] = target_field or "general"
@@ -1199,8 +1254,6 @@ STRICT RULES:
             state["turn_count"] = int(state.get("turn_count", 0)) + 1
             state["skip_extraction"] = True
             state["needs_followup"] = True
-            state["followup_field"] = None
-            state["clarification_context"] = ""
             return state
 
         # ============================================================

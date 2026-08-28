@@ -9,6 +9,7 @@ from agents.decision_agent import DecisionAgent
 from agents.extraction_validation import ExtractionValidationNode
 from agents.interview_agent import InterviewAgent
 from core.context_builder import ContextBuilder
+from core.conversation_intent import Intent, classify_input
 from core.profile_updater import ProfileUpdater
 from core.schemas import EXTRACTION_SCHEMA
 from graph.ciap_graph import build_ciap_graph
@@ -203,6 +204,94 @@ def test_refusal_and_unknown_phrases_defer_field(monkeypatch, answer: str) -> No
     updated = agent({"conversation_history": [], "applicant_profile": {"annual_income": 80000}})
     assert updated["skip_extraction"] is True
     assert updated["skipped_fields"] == ["monthly_debt"]
+
+
+@pytest.mark.parametrize("answer", ["shutup", "shut up", "please stop", "leave me alone"])
+def test_hostile_or_explicit_stop_language_ends_conversation(monkeypatch, answer: str) -> None:
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: answer)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda *args, **kwargs: None)
+    updated = InterviewAgent([{"field": "credit_score", "question": "What is your credit score?"}], "sys")(
+        {"conversation_history": [], "applicant_profile": {}}
+    )
+    assert updated["user_requested_stop"] is True
+    assert updated["needs_followup"] is False
+
+
+@pytest.mark.parametrize(
+    ("answer", "intent"),
+    [
+        ("skip", Intent.SKIP),
+        ("I don't want to tell you", Intent.REFUSAL),
+        ("no idea", Intent.UNKNOWN),
+        ("what is debt payment?", Intent.CLARIFICATION),
+        ("emp", Intent.ANSWER),
+    ],
+)
+def test_central_input_classifier(answer: str, intent: Intent) -> None:
+    assert classify_input(answer).intent == intent
+
+
+def test_third_clarification_auto_defers_field(monkeypatch) -> None:
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "what do you mean?")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda *args, **kwargs: None)
+    agent = InterviewAgent([{"field": "monthly_debt", "question": "What are your monthly debt payments?"}], "sys")
+    state = {"conversation_history": [], "applicant_profile": {}, "field_attempts": {"monthly_debt": 2}}
+
+    updated = agent(state)
+
+    assert updated["skipped_fields"] == ["monthly_debt"]
+    assert updated["deferred_reasons"]["monthly_debt"] == "too_many_clarification_requests"
+    assert updated["followup_field"] is None
+
+
+def test_third_invalid_answer_moves_to_next_field(monkeypatch) -> None:
+    questions: list[str] = []
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "employed")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent(
+        [
+            {"field": "credit_score", "question": "What is your credit score?"},
+            {"field": "employment_status", "question": "What is your employment status?"},
+        ],
+        "sys",
+    )
+    state = {
+        "conversation_history": [],
+        "applicant_profile": {},
+        "followup_field": "credit_score",
+        "current_question_field": "credit_score",
+        "latest_user_response": "-2",
+        "turn_count": 3,
+        "last_extraction": {"issues": ["credit_score must be between 300 and 850"]},
+        "field_attempts": {"credit_score": 2},
+    }
+
+    updated = agent(state)
+
+    assert "credit_score" in updated["skipped_fields"]
+    assert updated["current_question_field"] == "employment_status"
+    assert "leave the credit score unanswered" in questions[0].lower()
+
+
+def test_yes_to_credit_prompt_asks_for_score_without_extraction(monkeypatch) -> None:
+    questions: list[str] = []
+    replies = iter(["yes i know", "720"])
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: next(replies))
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent([{"field": "credit_score", "question": "What is your approximate credit score?"}], "sys")
+
+    first = agent({"conversation_history": [], "applicant_profile": {}})
+    first_skipped_extraction = first["skip_extraction"]
+    second = agent(first)
+
+    assert first_skipped_extraction is True
+    assert "what is your approximate credit score" in questions[1].lower()
+    assert second["skip_extraction"] is False
+    assert second["latest_user_response"] == "720"
 
 
 def test_decision_routes_past_a_deferred_field() -> None:

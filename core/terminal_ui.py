@@ -13,7 +13,7 @@ if hasattr(sys.stdout, "reconfigure"):
 from colorama import Fore, Style
 from colorama import init as colorama_init
 
-from core.schemas import FIELD_LABELS
+from core.schemas import FIELD_LABELS, REQUIRED_FIELDS
 
 colorama_init(autoreset=True)
 
@@ -114,7 +114,8 @@ def print_summary(profile: dict[str, Any]) -> None:
     print(Fore.BLUE + Style.BRIGHT + "-" * width)
     print(Fore.BLUE + Style.BRIGHT + "Collected Information".center(width))
     print(Fore.BLUE + Style.BRIGHT + "-" * width + Style.RESET_ALL)
-    for key, label in FIELD_LABELS.items():
+    for key in REQUIRED_FIELDS:
+        label = FIELD_LABELS[key]
         value = profile.get(key, "—")
         print(f"  {label:<24}: " + Fore.YELLOW + str(value) + Style.RESET_ALL)
     print(Fore.BLUE + Style.BRIGHT + "-" * width + Style.RESET_ALL)

@@ -32,7 +32,7 @@ DEFAULT_POLICY = [
     },
     {
         "field": "credit_score",
-        "question": "Do you know your approximate credit score?",
+        "question": "What is your approximate credit score?",
     },
     {
         "field": "employment_status",

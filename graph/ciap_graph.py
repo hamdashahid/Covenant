@@ -48,6 +48,11 @@ class CIAPState(TypedDict, total=False):
     conversation_tag: str | None
     clarification_context: str
     skipped_fields: list[str]
+    field_attempts: dict[str, int]
+    deferred_reasons: dict[str, str]
+    counted_invalid_response: str
+    auto_deferred_field: str
+    interpreted_input: dict[str, Any]
 
 def build_ciap_graph(
     interview_agent: Any,
