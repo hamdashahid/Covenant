@@ -129,15 +129,52 @@ class InterviewAgent:
     def _detect_skip_intent(self, text: str | None) -> bool:
         """Recognize a request to defer the current question."""
         cleaned = re.sub(r"\s+", " ", (text or "").strip().lower())
+        refusal_patterns = (
+            r"i (?:don'?t|do not) want to (?:tell|say|share)(?: (?:it|you|u))?",
+            r"(?:i )?(?:don'?t|do not|can'?t|cannot) remember",
+            r"(?:i have )?no idea",
+            r"not (?:sure|remember)",
+            r"no[ ,_-]*pass",
+        )
+        if any(re.fullmatch(pattern + r"[.!?]*", cleaned) for pattern in refusal_patterns):
+            return True
         return bool(
             re.fullmatch(
                 r"(?:skip(?: this)?(?: question)?|pass|next(?: question| ques)?|"
-                r"move (?:to )?(?:the )?next(?: question| ques)?|"
+                r"move (?:to )?(?:the )?next(?: question| ques| quest)?|"
                 r"ask (?:the )?next(?: question| ques)?|i (?:don'?t|do not) (?:know|want to answer))"
                 r"[.!?]*",
                 cleaned,
             )
         )
+
+    def _detect_finalize_intent(
+        self,
+        text: str | None,
+        question: str,
+        target_field: str | None,
+    ) -> bool:
+        """Treat 'no' as an answer unless the conversation is actually closing."""
+        cleaned = re.sub(r"\s+", " ", (text or "").strip().lower())
+        if not cleaned:
+            return False
+
+        explicit_closing = (
+            "that's all",
+            "that is all",
+            "all i have",
+            "that's it",
+            "that is it",
+            "no more information",
+            "nothing else",
+        )
+        if any(phrase in cleaned for phrase in explicit_closing):
+            return True
+
+        closing_question = target_field is None and bool(
+            re.search(r"anything else|like to add|more information", question, re.IGNORECASE)
+        )
+        return cleaned in self.NEGATIVE and closing_question
 
     def _static_question(
         self,
@@ -233,6 +270,10 @@ class InterviewAgent:
             "employment_status": (
                 "I didn't quite catch your work status. "
                 "Are you employed, self-employed, or currently between jobs?"
+            ),
+            "monthly_debt": (
+                "That's okay if you don't remember the exact amount. "
+                "What is your best estimate of the total you pay toward debts each month?"
             ),
             "total_savings": (
                 "Savings can't be a negative amount. "
@@ -425,6 +466,8 @@ class InterviewAgent:
     ) -> bool:
         """Reject model questions that drift away from the selected topic."""
         text = response.lower()
+        if "?" not in response:
+            return False
         if is_first_turn:
             return "first home" in text
         patterns = {
@@ -945,11 +988,10 @@ STRICT RULES:
             )
         )
 
-        is_finalize_phrase = any(
-            pattern.match(
-                user_response.strip()
-            )
-            for pattern in self.FINALIZE_PATTERNS
+        is_finalize_phrase = self._detect_finalize_intent(
+            user_response,
+            question,
+            target_field,
         )
 
         is_greeting = (

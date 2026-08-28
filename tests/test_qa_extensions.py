@@ -231,10 +231,10 @@ def test_interview_agent_uses_llm_reply_when_available(monkeypatch: pytest.Monke
     agent = InterviewAgent(
         interview_policy=[{"field": "monthly_debt", "question": "How much monthly debt do you have?"}],
         system_prompt="You are a helpful interviewer",
-        llm_client=FakeLLMReply("Please tell me about your monthly debt."),
+        llm_client=FakeLLMReply("Could you tell me about your monthly debt?"),
     )
     state = agent({"applicant_profile": {"annual_income": 90000}, "conversation_history": [], "followup_field": None})
-    assert state["current_question"] == "Please tell me about your monthly debt."
+    assert state["current_question"] == "Could you tell me about your monthly debt?"
     assert state["current_question_field"] == "monthly_debt"
 
 

@@ -87,7 +87,7 @@ class OpenAIClientAdapter:
             fields["employment_status"] = "self-employed"
         elif re.search(r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|unemploy\w*|out of work|no job|jobless)\b", lowered):
             fields["employment_status"] = "unemployed"
-        elif re.search(r"\b(employ\w*|full[ -]?time|part[ -]?time|working)\b", lowered):
+        elif re.fullmatch(r"\s*emp\s*", lowered) or re.search(r"\b(employ\w*|full[ -]?time|part[ -]?time|working)\b", lowered):
             fields["employment_status"] = "employed"
 
         return json.dumps(

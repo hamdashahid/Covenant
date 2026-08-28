@@ -36,6 +36,30 @@ def base_state(response_text: str) -> dict:
 
 
 class TestExtractionHappyPath(unittest.TestCase):
+    def test_emp_shorthand_is_understood_as_employed(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "What is your employment status?",
+            "current_question_field": "employment_status",
+            "latest_user_response": "emp",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["employment_status"], "employed")
+
+    def test_no_to_down_payment_amount_means_zero(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "How much can you put down?",
+            "current_question_field": "down_payment",
+            "latest_user_response": "no",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["down_payment"], 0.0)
+
     def test_self_shorthand_is_understood_as_self_employed(self) -> None:
         node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
         state = {
@@ -59,6 +83,30 @@ class TestExtractionHappyPath(unittest.TestCase):
         }
         result = node(state)
         self.assertEqual(result["applicant_profile"]["employment_status"], "self-employed")
+
+    def test_start_year_is_converted_to_years_employed(self) -> None:
+        node = make_node({"fields": {"employment_years": 2025}, "confidence": 0.9, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "How long have you been at your job?",
+            "current_question_field": "employment_years",
+            "latest_user_response": "from 2025",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["employment_years"], 1.0)
+
+    def test_business_start_year_phrase_is_converted_to_duration(self) -> None:
+        node = make_node({"fields": {"employment_years": 1}, "confidence": 0.9, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "How long have you been in business?",
+            "current_question_field": "employment_years",
+            "latest_user_response": "i started my business at 2022 and working onwards",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["employment_years"], 4.0)
 
     def test_valid_extraction_updates_profile(self) -> None:
         node = make_node({

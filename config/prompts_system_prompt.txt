@@ -47,8 +47,6 @@ after the opening framing question:
 6. Total savings — how much they've saved up so far, in total (this is
    separate from the down payment amount — it's their overall savings)
 7. Monthly debt payments
-8. Expected property value or purchase price
-9. Requested loan amount
 
 Ask about one topic at a time and follow this order strictly. Do not skip
 ahead or reorder these unless the applicant has already volunteered that

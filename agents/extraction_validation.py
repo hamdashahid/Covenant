@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import date
 from typing import Any
 
 from core.context_builder import ContextBuilder
@@ -103,9 +104,28 @@ class ExtractionValidationNode:
             return "self-employed"
         if re.search(r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|unemploy\w*|out of work|no job|jobless)\b", text):
             return "unemployed"
+        if re.fullmatch(r"emp|emplo\w*", text):
+            return "employed"
         if re.search(r"\b(employ\w*|full[ -]?time|part[ -]?time|working)\b", text):
             return "employed"
         return None
+
+    def _parse_non_negative_amount(self, raw: Any) -> float | None:
+        """Understand everyday zero answers without treating uncertainty as zero."""
+        text = re.sub(r"\s+", " ", str(raw or "").strip().lower()).strip(".!?")
+        zero_answers = {
+            "no",
+            "none",
+            "nothing",
+            "zero",
+            "no debt",
+            "no debts",
+            "no savings",
+            "no down payment",
+        }
+        if text in zero_answers:
+            return 0.0
+        return self._parse_float(raw)
 
     def _infer_fields_from_question(
         self, raw: str, latest_question: str, current_field: str | None = None
@@ -123,7 +143,7 @@ class ExtractionValidationNode:
                 inferred["annual_income"] = value
 
         if current_field == "monthly_debt" or re.search(r"monthly debt|debt payment|debt", question):
-            value = self._parse_float(response)
+            value = self._parse_non_negative_amount(response)
             if value is not None:
                 inferred["monthly_debt"] = value
 
@@ -153,12 +173,12 @@ class ExtractionValidationNode:
                 inferred["requested_loan_amount"] = value
 
         if current_field == "down_payment" or re.search(r"down payment|pay upfront", question):
-            value = self._parse_float(response)
+            value = self._parse_non_negative_amount(response)
             if value is not None:
                 inferred["down_payment"] = value
 
         if current_field == "total_savings" or re.search(r"saved up|saved so far|how much have you saved|total savings", question):
-            value = self._parse_float(response)
+            value = self._parse_non_negative_amount(response)
             if value is not None:
                 inferred["total_savings"] = value
 
@@ -307,9 +327,22 @@ class ExtractionValidationNode:
             current_field,
         )
 
+        latest_response = str(state.get("latest_user_response", ""))
+
+        if current_field == "employment_years":
+            start_year_match = re.search(
+                r"\b(?:(?:from|since|at|in)\s+|(?:started|began)(?:\s+my\s+business)?(?:\s+in|\s+at|\s+from)?\s*)(19\d{2}|20\d{2})\b",
+                latest_response,
+                re.IGNORECASE,
+            )
+            if start_year_match:
+                start_year = int(start_year_match.group(1))
+                if start_year <= date.today().year:
+                    fields["employment_years"] = float(date.today().year - start_year)
+
         if current_field == "employment_years" and re.search(
             r"\d\s*/\s*\d",
-            str(state.get("latest_user_response", "")),
+            latest_response,
         ):
             fields.pop("employment_years", None)
             parse_issues.append("employment_years is ambiguous")
@@ -334,6 +367,8 @@ class ExtractionValidationNode:
 
         if current_field == "employment_status" and "employment_status" not in validated_fields:
             validation_issues.append("employment_status is invalid")
+        if current_field == "monthly_debt" and "monthly_debt" not in validated_fields:
+            validation_issues.append("monthly_debt is unclear")
 
         if confidence < 0.30:
             validation_issues.append("Extraction confidence too low")
