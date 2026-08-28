@@ -137,47 +137,55 @@ class ExtractionValidationNode:
         if not response:
             return inferred
 
-        if current_field == "annual_income" or re.search(r"annual income|income", question):
+        def is_target(field: str, question_pattern: str) -> bool:
+            # Once the interview agent identifies the field being asked, that
+            # state is authoritative. Acknowledgements in the question may
+            # mention older values and must never make them extraction targets.
+            if current_field:
+                return current_field == field
+            return bool(re.search(question_pattern, question))
+
+        if is_target("annual_income", r"annual income|income"):
             value = self._parse_float(response)
             if value is not None:
                 inferred["annual_income"] = value
 
-        if current_field == "monthly_debt" or re.search(r"monthly debt|debt payment|debt", question):
+        if is_target("monthly_debt", r"monthly debt|debt payment|debt"):
             value = self._parse_non_negative_amount(response)
             if value is not None:
                 inferred["monthly_debt"] = value
 
-        if current_field == "credit_score" or re.search(r"credit score|score", question):
+        if is_target("credit_score", r"credit score|score"):
             value = self._parse_int(response)
             if value is not None:
                 inferred["credit_score"] = value
 
-        if current_field == "employment_status" or re.search(r"employment status", question):
+        if is_target("employment_status", r"employment status"):
             normalized = self._normalize_employment_status(response)
             if normalized:
                 inferred["employment_status"] = normalized
 
-        if (current_field == "employment_years" or re.search(r"years|how long have you been|current job|business", question)) and not re.search(r"\d\s*/\s*\d", response):
+        if is_target("employment_years", r"years|how long have you been|current job|business") and not re.search(r"\d\s*/\s*\d", response):
             value = self._parse_float(response)
             if value is not None:
                 inferred["employment_years"] = value
 
-        if current_field == "property_value" or re.search(r"property value|value of the property|property you want|price of the property", question):
+        if is_target("property_value", r"property value|value of the property|property you want|price of the property"):
             value = self._parse_float(response)
             if value is not None:
                 inferred["property_value"] = value
 
-        if current_field == "requested_loan_amount" or re.search(r"loan amount|how much loan|requesting|loan you're requesting|loan you want", question):
+        if is_target("requested_loan_amount", r"loan amount|how much loan|requesting|loan you're requesting|loan you want"):
             value = self._parse_float(response)
             if value is not None:
                 inferred["requested_loan_amount"] = value
 
-        if current_field == "down_payment" or re.search(r"down payment|pay upfront", question):
+        if is_target("down_payment", r"down payment|pay upfront"):
             value = self._parse_non_negative_amount(response)
             if value is not None:
                 inferred["down_payment"] = value
 
-        if current_field == "total_savings" or re.search(r"saved up|saved so far|how much have you saved|total savings", question):
+        if is_target("total_savings", r"saved up|saved so far|how much have you saved|total savings"):
             value = self._parse_non_negative_amount(response)
             if value is not None:
                 inferred["total_savings"] = value
@@ -364,6 +372,15 @@ class ExtractionValidationNode:
                 validation_issues = inferred_issues
             elif not confidence < 0.30:
                 validation_issues.extend(inferred_issues)
+
+        # Apply the same scope guard after deterministic inference. This is a
+        # final defense against an acknowledgement about an earlier field
+        # causing that field to be overwritten by the latest numeric answer.
+        validated_fields = self._limit_fields_to_latest_answer(
+            validated_fields,
+            state.get("latest_user_response", ""),
+            current_field,
+        )
 
         if current_field == "employment_status" and "employment_status" not in validated_fields:
             validation_issues.append("employment_status is invalid")

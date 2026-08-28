@@ -325,6 +325,45 @@ class TestExtractionConflictDetection(unittest.TestCase):
         self.assertEqual(result["applicant_profile"]["total_savings"], 50000.0)
         self.assertEqual(result["last_extraction"]["validated_fields"], {"total_savings": 50000.0})
 
+    def test_deterministic_savings_reader_cannot_overwrite_down_payment(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {"down_payment": 0.0},
+            "current_question": "Separate from the down payment, how much do you have in savings?",
+            "current_question_field": "total_savings",
+            "latest_user_response": "40k",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["down_payment"], 0.0)
+        self.assertEqual(result["applicant_profile"]["total_savings"], 40000.0)
+
+    def test_income_answer_cannot_overwrite_acknowledged_employment_years(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {"employment_years": 3.0},
+            "current_question": "I've noted 3 years in your current work. What do you earn in a year?",
+            "current_question_field": "annual_income",
+            "latest_user_response": "89,000",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["employment_years"], 3.0)
+        self.assertEqual(result["applicant_profile"]["annual_income"], 89000.0)
+
+    def test_credit_answer_cannot_overwrite_acknowledged_down_payment(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {"down_payment": 0.0},
+            "current_question": "I've noted 0 for the down payment. What is your credit score?",
+            "current_question_field": "credit_score",
+            "latest_user_response": "567",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["down_payment"], 0.0)
+        self.assertEqual(result["applicant_profile"]["credit_score"], 567)
+
     def test_ambiguous_slash_years_requires_clarification(self) -> None:
         node = make_node({
             "fields": {"employment_years": 1},
