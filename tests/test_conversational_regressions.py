@@ -181,6 +181,30 @@ def test_move_next_question_defers_current_field(monkeypatch) -> None:
     assert updated["followup_field"] is None
 
 
+def test_move_next_quest_typo_defers_current_field(monkeypatch) -> None:
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "move to next quest")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda *args, **kwargs: None)
+    agent = InterviewAgent([{"field": "monthly_debt", "question": "What are your monthly debt payments?"}], "sys")
+    updated = agent({"conversation_history": [], "applicant_profile": {"annual_income": 99000}})
+    assert updated["skip_extraction"] is True
+    assert updated["skipped_fields"] == ["monthly_debt"]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["i dont want to tell", "i don't want to tell u", "no idea", "not remember", "no pass"],
+)
+def test_refusal_and_unknown_phrases_defer_field(monkeypatch, answer: str) -> None:
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: answer)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda *args, **kwargs: None)
+    agent = InterviewAgent([{"field": "monthly_debt", "question": "What are your monthly debt payments?"}], "sys")
+    updated = agent({"conversation_history": [], "applicant_profile": {"annual_income": 80000}})
+    assert updated["skip_extraction"] is True
+    assert updated["skipped_fields"] == ["monthly_debt"]
+
+
 def test_decision_routes_past_a_deferred_field() -> None:
     evaluator = type("Evaluator", (), {"rules": {}, "evaluate": lambda self, profile: {"status": "Requires More Info", "summary": "", "rule_breakdown": []}})()
     agent = DecisionAgent(evaluator)
@@ -252,6 +276,15 @@ def test_generated_response_keeps_only_one_question() -> None:
     assert cleaned.count("?") == 1
 
 
+def test_generated_reply_without_a_question_is_rejected() -> None:
+    agent = InterviewAgent([], "sys")
+    assert not agent._response_matches_target(
+        "You may want to check with your bank and let me know.",
+        "credit_score",
+        False,
+    )
+
+
 def test_generated_question_must_match_selected_topic() -> None:
     agent = InterviewAgent([], "sys")
     assert not agent._response_matches_target(
@@ -263,6 +296,31 @@ def test_generated_question_must_match_selected_topic() -> None:
         "What is your annual income from self-employment?",
         "annual_income",
         False,
+    )
+
+
+def test_no_to_first_home_question_does_not_finalize(monkeypatch) -> None:
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "no")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda *args, **kwargs: None)
+    agent = InterviewAgent(
+        [{"field": "down_payment", "question": "How much can you put down?"}],
+        "sys",
+        llm_client=None,
+    )
+
+    updated = agent({"conversation_history": [], "applicant_profile": {}})
+
+    assert updated.get("user_requested_finalize") is not True
+    assert updated["latest_user_response"] == "no"
+
+
+def test_explicit_closing_phrase_still_finalizes() -> None:
+    agent = InterviewAgent([], "sys")
+    assert agent._detect_finalize_intent(
+        "No, that's all the information I have",
+        "Is there anything else you'd like to add?",
+        None,
     )
 
 

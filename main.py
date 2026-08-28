@@ -54,14 +54,6 @@ DEFAULT_POLICY = [
         "field": "monthly_debt",
         "question": "About how much do you pay each month toward debts?",
     },
-    {
-        "field": "property_value",
-        "question": "What price range are you considering for the property?",
-    },
-    {
-        "field": "requested_loan_amount",
-        "question": "Roughly how much would you need to borrow?",
-    },
 ]
 SYSTEM_PROMPT_PATH = Path("config") / "prompts_system_prompt.txt"
 MODEL_ID = "gpt-4o"

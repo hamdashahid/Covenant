@@ -60,7 +60,7 @@ class ClaudeClientAdapter:
             fields["employment_status"] = "self-employed"
         elif "unemployed" in lowered:
             fields["employment_status"] = "unemployed"
-        elif "employed" in lowered:
+        elif re.fullmatch(r"\s*emp\s*", lowered) or "employed" in lowered:
             fields["employment_status"] = "employed"
 
         return json.dumps(
