@@ -41,7 +41,8 @@ class SQLiteStore:
                     created_at TEXT NOT NULL,
                     closed_at TEXT,
                     tags TEXT,
-                    conversation_tag TEXT
+                    conversation_tag TEXT,
+                    runtime_state_json TEXT
                 )
                 """
             )
@@ -85,6 +86,8 @@ class SQLiteStore:
                 conn.execute("ALTER TABLE sessions ADD COLUMN tags TEXT")
             if "conversation_tag" not in cols:
                 conn.execute("ALTER TABLE sessions ADD COLUMN conversation_tag TEXT")
+            if "runtime_state_json" not in cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN runtime_state_json TEXT")
             cur = conn.execute("PRAGMA table_info(messages)").fetchall()
             cols = [r[1] for r in cur]
             if "tags" not in cols:
@@ -93,7 +96,7 @@ class SQLiteStore:
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT session_id, model_id, session_state, created_at, closed_at, tags, conversation_tag FROM sessions WHERE session_id = ?",
+                "SELECT session_id, model_id, session_state, created_at, closed_at, tags, conversation_tag, runtime_state_json FROM sessions WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
         if not row:
@@ -104,6 +107,10 @@ class SQLiteStore:
         except Exception:
             tags = None
         conversation_tag = row["conversation_tag"] if "conversation_tag" in row.keys() else None
+        try:
+            runtime_state = json.loads(row["runtime_state_json"]) if row["runtime_state_json"] else {}
+        except (TypeError, json.JSONDecodeError):
+            runtime_state = {}
         return {
             "session_id": row["session_id"],
             "model_id": row["model_id"],
@@ -112,7 +119,15 @@ class SQLiteStore:
             "closed_at": row["closed_at"],
             "tags": tags,
             "conversation_tag": conversation_tag,
+            "runtime_state": runtime_state,
         }
+
+    def update_runtime_state(self, session_id: str, runtime_state: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET runtime_state_json = ? WHERE session_id = ?",
+                (json.dumps(runtime_state), session_id),
+            )
 
     def create_session(self, session_id: str, model_id: str, tags: list[str] | None = None) -> None:
         now = _utc_now()

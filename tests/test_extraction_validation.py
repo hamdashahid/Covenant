@@ -48,6 +48,18 @@ class TestExtractionHappyPath(unittest.TestCase):
         result = node(state)
         self.assertEqual(result["applicant_profile"]["employment_status"], "employed")
 
+    def test_employment_shorthand_inside_sentence_is_understood(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "What is your employment status?",
+            "current_question_field": "employment_status",
+            "latest_user_response": "yes i am emp",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["employment_status"], "employed")
+
     def test_no_to_down_payment_amount_means_zero(self) -> None:
         node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
         state = {
@@ -59,6 +71,57 @@ class TestExtractionHappyPath(unittest.TestCase):
         }
         result = node(state)
         self.assertEqual(result["applicant_profile"]["down_payment"], 0.0)
+
+    def test_no_amount_for_down_payment_means_zero(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "How much can you put down?",
+            "current_question_field": "down_payment",
+            "latest_user_response": "no amount",
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["down_payment"], 0.0)
+
+    def test_natural_zero_phrases_work_without_the_api(self) -> None:
+        node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
+        cases = [
+            ("down_payment", "How much can you put down?", "i have no payment"),
+            ("monthly_debt", "How much debt do you pay?", "i dont pay debt"),
+            ("monthly_debt", "How much debt do you pay?", "I have no loans"),
+        ]
+        for field, question, answer in cases:
+            state = {
+                "conversation_history": [],
+                "applicant_profile": {},
+                "current_question": question,
+                "current_question_field": field,
+                "latest_user_response": answer,
+            }
+            result = node(state)
+            self.assertEqual(result["applicant_profile"][field], 0.0)
+
+    def test_structured_interpretation_is_field_locked_and_reused(self) -> None:
+        node = make_node({"fields": {"down_payment": 99999}, "confidence": 0.9, "issues": []})
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {"down_payment": 30000.0},
+            "current_question": "How much debt do you pay?",
+            "current_question_field": "monthly_debt",
+            "latest_user_response": "I don't pay debt",
+            "interpreted_input": {
+                "intent": "answer",
+                "field": "monthly_debt",
+                "value": 0,
+                "confidence": 0.98,
+                "needs_clarification": False,
+                "reason": "clear absence of debt",
+            },
+        }
+        result = node(state)
+        self.assertEqual(result["applicant_profile"]["monthly_debt"], 0.0)
+        self.assertEqual(result["applicant_profile"]["down_payment"], 30000.0)
 
     def test_self_shorthand_is_understood_as_self_employed(self) -> None:
         node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
@@ -242,7 +305,13 @@ class TestExtractionValidationRejectsOutOfRangeValues(unittest.TestCase):
         })
         state = node(base_state("-5000"))
         self.assertNotIn("annual_income", state["applicant_profile"])
-        self.assertIn("annual_income must be > 0", state["last_extraction"]["issues"])
+        self.assertIn("annual_income must be a realistic positive yearly amount", state["last_extraction"]["issues"])
+
+    def test_absurdly_large_annual_income_is_rejected(self) -> None:
+        node = make_node({"fields": {"annual_income": 900000000000000000}, "confidence": 0.9, "issues": []})
+        state = node(base_state("900000000000000000"))
+        self.assertNotIn("annual_income", state["applicant_profile"])
+        self.assertIn("annual_income must be a realistic positive yearly amount", state["last_extraction"]["issues"])
 
     def test_negative_monthly_debt_rejected(self) -> None:
         node = make_node({

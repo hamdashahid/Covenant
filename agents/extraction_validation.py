@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from datetime import date
 from typing import Any
@@ -53,8 +54,46 @@ class ExtractionValidationNode:
                 value_float *= 1_000_000
             return str(value_float)
 
+        word_number = self._parse_number_words(text)
+        if word_number is not None:
+            return str(word_number)
+
         # Preserve the cleaned string if no numeric token was found.
         return text
+
+    def _parse_number_words(self, text: str) -> float | None:
+        """Parse common spoken amounts such as 'ninety thousand'."""
+        cleaned = re.sub(r"[^a-z -]", " ", text.lower().replace("’", "'")).replace("-", " ")
+        tokens = [
+            token for token in cleaned.split()
+            if token not in {
+                "and", "about", "around", "roughly", "close", "to", "annually",
+                "yearly", "per", "year", "i", "my", "income", "earn", "make",
+                "salary", "is", "approximately", "almost",
+            }
+        ]
+        small = {
+            "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+            "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+            "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+            "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40,
+            "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+        }
+        if not tokens or any(token not in small and token not in {"hundred", "thousand", "million", "billion"} for token in tokens):
+            return None
+        total = 0
+        current = 0
+        for token in tokens:
+            if token in small:
+                current += small[token]
+            elif token == "hundred":
+                current = max(current, 1) * 100
+            elif token in {"thousand", "million", "billion"}:
+                scale = {"thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}[token]
+                total += max(current, 1) * scale
+                current = 0
+        return float(total + current)
 
     def _parse_float(self, raw: Any) -> float | None:
         if raw is None:
@@ -106,13 +145,13 @@ class ExtractionValidationNode:
             return "unemployed"
         if re.fullmatch(r"emp|emplo\w*", text):
             return "employed"
-        if re.search(r"\b(employ\w*|full[ -]?time|part[ -]?time|working)\b", text):
+        if re.search(r"\b(emp|employ\w*|full[ -]?time|part[ -]?time|working)\b", text):
             return "employed"
         return None
 
     def _parse_non_negative_amount(self, raw: Any) -> float | None:
         """Understand everyday zero answers without treating uncertainty as zero."""
-        text = re.sub(r"\s+", " ", str(raw or "").strip().lower()).strip(".!?")
+        text = re.sub(r"\s+", " ", str(raw or "").replace("’", "'").strip().lower()).strip(".!?")
         zero_answers = {
             "no",
             "none",
@@ -122,8 +161,21 @@ class ExtractionValidationNode:
             "no debts",
             "no savings",
             "no down payment",
+            "no amount",
+            "no amount available",
+            "not any",
         }
         if text in zero_answers:
+            return 0.0
+        zero_patterns = (
+            r"(?:i (?:have|got) )?no (?:down )?payments?",
+            r"i (?:don'?t|do not) pay (?:any )?(?:debt|debts|loans?)",
+            r"(?:i have )?no (?:monthly )?(?:debt|debts|loans?|repayments?)",
+            r"nothing (?:to pay|toward debt|for the down payment)",
+            r"(?:i have )?nothing available for (?:a |the )?down payment",
+            r"i (?:don'?t|do not) make any debt payments?",
+        )
+        if any(re.fullmatch(pattern, text) for pattern in zero_patterns):
             return 0.0
         return self._parse_float(raw)
 
@@ -228,14 +280,14 @@ class ExtractionValidationNode:
 
         if "annual_income" in fields:
             value = self._parse_float(fields["annual_income"])
-            if value is not None and value > 0:
+            if value is not None and math.isfinite(value) and 0 < value <= 1_000_000_000_000:
                 validated["annual_income"] = value
             else:
-                issues.append("annual_income must be > 0")
+                issues.append("annual_income must be a realistic positive yearly amount")
 
         if "monthly_debt" in fields:
             value = self._parse_float(fields["monthly_debt"])
-            if value is not None and value >= 0:
+            if value is not None and math.isfinite(value) and 0 <= value <= 1_000_000_000_000:
                 validated["monthly_debt"] = value
             else:
                 issues.append("monthly_debt must be >= 0")
@@ -263,10 +315,10 @@ class ExtractionValidationNode:
 
         if "employment_years" in fields:
             value = self._parse_float(fields["employment_years"])
-            if value is not None and value >= 0:
+            if value is not None and math.isfinite(value) and 0 <= value <= 80:
                 validated["employment_years"] = value
             else:
-                issues.append("employment_years must be >= 0")
+                issues.append("employment_years must be between 0 and 80")
 
         if "property_value" in fields:
             value = self._parse_float(fields["property_value"])
@@ -277,14 +329,14 @@ class ExtractionValidationNode:
 
         if "down_payment" in fields:
             value = self._parse_float(fields["down_payment"])
-            if value is not None and value >= 0:
+            if value is not None and math.isfinite(value) and 0 <= value <= 1_000_000_000_000_000:
                 validated["down_payment"] = value
             else:
                 issues.append("down_payment must be >= 0")
 
         if "total_savings" in fields:
             value = self._parse_float(fields["total_savings"])
-            if value is not None and value >= 0:
+            if value is not None and math.isfinite(value) and 0 <= value <= 1_000_000_000_000_000:
                 validated["total_savings"] = value
             else:
                 issues.append("total_savings must be >= 0")
@@ -314,19 +366,36 @@ class ExtractionValidationNode:
             latest_user_response=state.get("latest_user_response", ""),
             schema=self.extraction_schema,
         )
-        try:
-            raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
-            extraction_failed = False
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.debug("LLM extraction failed", exc_info=True)
+        interpreted = state.get("interpreted_input", {}) or {}
+        interpreted_value = interpreted.get("value") if isinstance(interpreted, dict) else None
+        if (
+            isinstance(interpreted, dict)
+            and interpreted.get("intent") == "answer"
+            and interpreted_value is not None
+            and state.get("current_question_field")
+        ):
             raw = json.dumps(
                 {
-                    "fields": {},
-                    "confidence": 0.0,
-                    "issues": ["LLM extraction failed; deterministic fallback unavailable"],
+                    "fields": {state["current_question_field"]: interpreted_value},
+                    "confidence": float(interpreted.get("confidence", 0.0)),
+                    "issues": [],
                 }
             )
-            extraction_failed = True
+            extraction_failed = False
+        else:
+            try:
+                raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
+                extraction_failed = False
+            except Exception as exc:  # pragma: no cover - defensive guard
+                logger.debug("LLM extraction failed", exc_info=True)
+                raw = json.dumps(
+                    {
+                        "fields": {},
+                        "confidence": 0.0,
+                        "issues": ["LLM extraction failed; deterministic fallback unavailable"],
+                    }
+                )
+                extraction_failed = True
         fields, confidence, parse_issues = self._parse_response(raw)
         current_field = state.get("current_question_field")
         fields = self._limit_fields_to_latest_answer(
@@ -386,6 +455,10 @@ class ExtractionValidationNode:
             validation_issues.append("employment_status is invalid")
         if current_field == "monthly_debt" and "monthly_debt" not in validated_fields:
             validation_issues.append("monthly_debt is unclear")
+        if current_field and current_field not in validated_fields and not any(
+            str(issue).startswith(current_field) for issue in validation_issues
+        ):
+            validation_issues.append(f"{current_field} is unclear")
 
         if confidence < 0.30:
             validation_issues.append("Extraction confidence too low")

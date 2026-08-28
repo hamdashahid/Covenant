@@ -64,6 +64,27 @@ class TestDecisionAgent(unittest.TestCase):
         self.assertFalse(result["needs_followup"])
         self.assertEqual(agent.rule_evaluator.called_with, full_profile)
 
+    def test_savings_is_optional_for_the_eligibility_decision(self) -> None:
+        profile = {
+            "annual_income": 90000,
+            "monthly_debt": 400,
+            "credit_score": 589,
+            "employment_status": "employed",
+            "employment_years": 0,
+            "down_payment": 0,
+        }
+        agent = DecisionAgent(
+            rule_evaluator=StubRuleEvaluator(
+                {"status": "Ineligible", "summary": "Known rules failed", "rule_breakdown": []}
+            )
+        )
+
+        result = agent({"applicant_profile": profile, "skipped_fields": ["total_savings"], "turn_count": 8})
+
+        self.assertEqual(result["decision_status"], "Ineligible")
+        self.assertFalse(result["needs_followup"])
+        self.assertEqual(agent.rule_evaluator.called_with, profile)
+
     def test_followup_field_is_first_missing_field_in_schema_order(self) -> None:
         agent = DecisionAgent(rule_evaluator=StubRuleEvaluator({"status": "Eligible"}))
         state = {

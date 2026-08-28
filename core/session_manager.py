@@ -7,6 +7,17 @@ from persistence.sqlite_store import SQLiteStore
 
 
 class SessionManager:
+    RUNTIME_KEYS = (
+        "skipped_fields",
+        "deferred_reasons",
+        "field_attempts",
+        "asked_fields",
+        "answered_fields",
+        "question_history",
+        "followup_field",
+        "last_extraction",
+    )
+
     def __init__(self, store: SQLiteStore, default_model_id: str = "claude-sonnet-4-6") -> None:
         self.store = store
         self.default_model_id = default_model_id
@@ -36,6 +47,9 @@ class SessionManager:
                     "decision_summary": "",
                     "conversation_tag": existing.get("conversation_tag"),
                 }
+                saved_runtime = existing.get("runtime_state", {})
+                if isinstance(saved_runtime, dict):
+                    state.update({key: saved_runtime[key] for key in self.RUNTIME_KEYS if key in saved_runtime})
                 return existing["session_id"], existing["model_id"], state
 
         new_session_id = session_id or str(uuid.uuid4())
@@ -65,3 +79,8 @@ class SessionManager:
             messages=state.get("conversation_history", []),
         )
         self.store.update_session_state(session_id, "closed" if completed else "in_progress")
+        if hasattr(self.store, "update_runtime_state"):
+            self.store.update_runtime_state(
+                session_id,
+                {key: state[key] for key in self.RUNTIME_KEYS if key in state},
+            )
