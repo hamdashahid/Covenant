@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.schemas import ELIGIBILITY_REQUIRED_FIELDS
+from core.schemas import ELIGIBILITY_REQUIRED_FIELDS, FIELD_LABELS
 
 
 class DecisionAgent:
@@ -425,8 +425,10 @@ class DecisionAgent:
             state["followup_field"] = None
             state["needs_followup"] = False
             state["decision_status"] = "Requires More Info"
+            missing_labels = [FIELD_LABELS.get(field, field.replace("_", " ")) for field in missing]
             state["decision_summary"] = (
-                "The pre-check could not be completed because some questions were skipped."
+                "I couldn't complete the pre-check because the following required information "
+                f"was left unanswered: {', '.join(missing_labels)}."
             )
             report = {
                 "status": state["decision_status"],

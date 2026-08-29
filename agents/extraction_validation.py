@@ -162,6 +162,8 @@ class ExtractionValidationNode:
             "no savings",
             "no down payment",
             "no amount",
+            "i have no amount",
+            "i've got no amount",
             "no amount available",
             "not any",
         }
@@ -176,6 +178,25 @@ class ExtractionValidationNode:
             r"i (?:don'?t|do not) make any debt payments?",
         )
         if any(re.fullmatch(pattern, text) for pattern in zero_patterns):
+            return 0.0
+
+        # Meaning-based zero detection. Allow conversational filler and words
+        # such as "toward", while requiring both a clear negation and a debt,
+        # savings, or down-payment action. This avoids an endless phrase list.
+        debt_zero = bool(
+            re.search(r"\b(?:don'?t|do not|never|no)\b.*\b(?:pay|owe|have|make)\b.*\b(?:debts?|loans?|repayments?)\b", text)
+            or re.search(r"\b(?:have|owe|make)\b.*\bno\b.*\b(?:debts?|loans?|repayments?)\b", text)
+        )
+        down_payment_zero = bool(
+            re.search(r"\bno amount\b", text)
+            or re.search(r"\b(?:no|nothing|zero)\b.*\b(?:down payment|payment|put down|upfront)\b", text)
+            or re.search(r"\b(?:can'?t|cannot|don'?t|do not)\b.*\b(?:put|pay)\b.*\b(?:down|upfront)\b", text)
+        )
+        savings_zero = bool(
+            re.search(r"\b(?:no|nothing|zero)\b.*\b(?:savings?|saved)\b", text)
+            or re.search(r"\b(?:haven'?t|have not|don'?t|do not)\b.*\b(?:save|saved)\b", text)
+        )
+        if debt_zero or down_payment_zero or savings_zero:
             return 0.0
         return self._parse_float(raw)
 

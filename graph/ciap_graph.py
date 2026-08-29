@@ -53,6 +53,7 @@ class CIAPState(TypedDict, total=False):
     counted_invalid_response: str
     auto_deferred_field: str
     interpreted_input: dict[str, Any]
+    recently_deferred_field: str
 
 def build_ciap_graph(
     interview_agent: Any,

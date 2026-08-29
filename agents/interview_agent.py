@@ -244,8 +244,8 @@ class InterviewAgent:
                 "Roughly how much could you put down?"
             ),
             "employment_years": (
-                "The number of years can't be negative. "
-                "About how long have you been in your current job or business?"
+                "I couldn't identify how long you've been in your current job or business. "
+                "About how many years has it been? You can also say 'skip'."
             ),
             "annual_income": (
                 "That income amount doesn't look realistic, so I don't want to record it incorrectly. "
@@ -269,6 +269,27 @@ class InterviewAgent:
             return (
                 "I want to make sure I record that correctly. "
                 f"When you say '{answer}', do you mean a fraction of a year or a range of years?"
+            )
+        if field == "employment_years" and any(word in issues for word in ("negative", "between 0 and 80", "must be >= 0")):
+            latest = str(state.get("latest_user_response", "")).lower()
+            if re.search(r"\b(?:full[ -]?time|part[ -]?time|office|salary|income|earn|law firm|company)\b", latest):
+                return (
+                    "I understood the work details, but I still need the length of time. "
+                    "About how many years have you worked there?"
+                )
+            return (
+                "The number of years should be between 0 and 80. "
+                "About how long have you been in your current job or business?"
+            )
+        if field == "monthly_debt" and any(word in issues for word in ("must be >= 0", "negative")):
+            return (
+                "Monthly debt payments can't be negative. If you don't pay any debt, enter 0; "
+                "otherwise, what is the approximate monthly amount?"
+            )
+        if field == "down_payment" and any(word in issues for word in ("must be >= 0", "negative")):
+            return (
+                "A down payment can't be negative. If you have no down payment, enter 0; "
+                "otherwise, roughly how much could you put down?"
             )
         if field and field in issues:
             return prompts.get(field, "That value doesn't look valid. Could you try again?")
@@ -977,10 +998,23 @@ STRICT RULES:
                 is_first_turn,
             )
 
-        auto_deferred_field = state.pop("auto_deferred_field", None)
+        auto_deferred_field = state.get("auto_deferred_field")
+        state["auto_deferred_field"] = ""
         if auto_deferred_field:
             label = FIELD_LABELS.get(auto_deferred_field, auto_deferred_field).lower()
             question = f"We can leave the {label} unanswered for now and continue. {self._fallback_question(target_field, state, False)}"
+
+        recently_deferred = state.get("recently_deferred_field")
+        state["recently_deferred_field"] = ""
+        if recently_deferred:
+            label = FIELD_LABELS.get(recently_deferred, recently_deferred).lower()
+            reason = (state.get("deferred_reasons", {}) or {}).get(recently_deferred)
+            acknowledgement = {
+                "skip": f"Okay — we'll skip the {label} for now.",
+                "unknown": f"No problem — we'll leave the {label} unanswered for now.",
+                "refusal": f"Understood — you don't have to share the {label}.",
+            }.get(reason, f"We'll leave the {label} unanswered for now.")
+            question = f"{acknowledgement} {self._static_question(target_field)}"
 
         # ============================================================
         # TRACK EXACT TARGET FIELD
@@ -1247,6 +1281,7 @@ STRICT RULES:
             history.append({"role": "assistant", "content": question})
             history.append({"role": "user", "content": user_response})
             self._defer_field(state, target_field, interpreted_intent.value)
+            state["recently_deferred_field"] = target_field
             state["conversation_history"] = history
             state["current_question"] = question
             state["current_question_field"] = target_field or "general"

@@ -85,6 +85,21 @@ class TestDecisionAgent(unittest.TestCase):
         self.assertFalse(result["needs_followup"])
         self.assertEqual(agent.rule_evaluator.called_with, profile)
 
+    def test_skipped_required_field_is_named_in_final_summary(self) -> None:
+        agent = DecisionAgent(rule_evaluator=StubRuleEvaluator({"status": "Eligible"}))
+        profile = {
+            "annual_income": 90000,
+            "monthly_debt": 0,
+            "credit_score": 710,
+            "employment_status": "employed",
+            "employment_years": 5,
+        }
+        result = agent(
+            {"applicant_profile": profile, "skipped_fields": ["down_payment"], "turn_count": 8}
+        )
+        self.assertEqual(result["decision_status"], "Requires More Info")
+        self.assertIn("Down Payment", result["decision_summary"])
+
     def test_followup_field_is_first_missing_field_in_schema_order(self) -> None:
         agent = DecisionAgent(rule_evaluator=StubRuleEvaluator({"status": "Eligible"}))
         state = {

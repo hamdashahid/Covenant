@@ -27,6 +27,8 @@ def node() -> ExtractionValidationNode:
     [
         "skip", "skip this", "skip this question", "pass", "next", "next question",
         "move next ques", "move to next quest", "ask the next question", "no pass",
+        "shut up plz move on", "its not neg bro i just said move on",
+        "bro please skip this question", "can we go to the next question",
     ],
 )
 def test_skip_language_matrix(text: str) -> None:
@@ -91,6 +93,8 @@ def test_clarification_language_matrix(text: str) -> None:
         ("down_payment", "How much can you put down?", "zero"),
         ("down_payment", "How much can you put down?", "no down payment"),
         ("down_payment", "How much can you put down?", "no amount"),
+        ("down_payment", "How much can you put down?", "i have no amount"),
+        ("down_payment", "How much can you put down?", "I've got no amount"),
         ("down_payment", "How much can you put down?", "i have no payment"),
         ("down_payment", "How much can you put down?", "nothing for the down payment"),
         ("down_payment", "How much can you put down?", "I have nothing available for a down payment"),
@@ -101,6 +105,12 @@ def test_clarification_language_matrix(text: str) -> None:
         ("monthly_debt", "How much debt do you pay?", "I have no loans"),
         ("monthly_debt", "How much debt do you pay?", "nothing toward debt"),
         ("monthly_debt", "How much debt do you pay?", "I don’t make any debt payments"),
+        ("monthly_debt", "How much debt do you pay?", "i dont pay toward debts"),
+        ("monthly_debt", "How much debt do you pay?", "bro i tell u i dont pay toward debts"),
+        ("monthly_debt", "How much debt do you pay?", "I do not owe any loans at all"),
+        ("monthly_debt", "How much debt do you pay?", "I never make payments toward loans"),
+        ("down_payment", "How much can you put down?", "I cannot put anything down"),
+        ("total_savings", "How much do you have saved?", "I have not saved anything"),
         ("total_savings", "How much do you have saved?", "no savings"),
         ("total_savings", "How much do you have saved?", "nothing"),
     ],

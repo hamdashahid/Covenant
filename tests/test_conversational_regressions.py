@@ -194,6 +194,138 @@ def test_move_next_quest_typo_defers_current_field(monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     "answer",
+    ["shut up plz move on", "its not neg bro i just said move on"],
+)
+def test_frustrated_move_on_language_skips_instead_of_looping(monkeypatch, answer: str) -> None:
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: answer)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda *args, **kwargs: None)
+    agent = InterviewAgent(
+        [
+            {"field": "employment_years", "question": "How long have you worked there?"},
+            {"field": "annual_income", "question": "What is your annual income?"},
+        ],
+        "sys",
+    )
+
+    updated = agent({"conversation_history": [], "applicant_profile": {"employment_status": "employed"}})
+
+    assert updated.get("user_requested_stop") is not True
+    assert updated["skipped_fields"] == ["employment_years"]
+    assert updated["followup_field"] is None
+    assert updated["needs_followup"] is True
+
+
+def test_unclear_employment_years_does_not_claim_answer_was_negative(monkeypatch) -> None:
+    questions: list[str] = []
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "skip")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent([{"field": "employment_years", "question": "How long have you worked there?"}], "sys")
+
+    agent(
+        {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "followup_field": "employment_years",
+            "current_question_field": "employment_years",
+            "latest_user_response": "something unrelated",
+            "last_extraction": {"issues": ["employment_years is unclear"]},
+        }
+    )
+
+    assert "couldn't identify" in questions[0].lower()
+    assert "negative" not in questions[0].lower()
+
+
+def test_job_details_are_not_described_as_negative_years(monkeypatch) -> None:
+    questions: list[str] = []
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "5")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent([{"field": "employment_years", "question": "How long have you worked there?"}], "sys")
+    agent(
+        {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "followup_field": "employment_years",
+            "current_question_field": "employment_years",
+            "latest_user_response": "60k full time law office of James d hunter",
+            "last_extraction": {"issues": ["employment_years must be between 0 and 80"]},
+        }
+    )
+    assert "understood the work details" in questions[0].lower()
+    assert "negative" not in questions[0].lower()
+
+
+def test_negative_monthly_debt_gets_accurate_guidance(monkeypatch) -> None:
+    questions: list[str] = []
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "0")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent([{"field": "monthly_debt", "question": "What is your monthly debt?"}], "sys")
+    agent(
+        {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "followup_field": "monthly_debt",
+            "current_question_field": "monthly_debt",
+            "latest_user_response": "-1",
+            "last_extraction": {"issues": ["monthly_debt must be >= 0"]},
+        }
+    )
+    assert "can't be negative" in questions[0].lower()
+    assert "enter 0" in questions[0].lower()
+
+
+def test_skipped_field_is_acknowledged_before_next_question(monkeypatch) -> None:
+    questions: list[str] = []
+    replies = iter(["move on", "710"])
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: next(replies))
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent(
+        [
+            {"field": "down_payment", "question": "How much can you put down?"},
+            {"field": "credit_score", "question": "What is your credit score?"},
+        ],
+        "sys",
+    )
+    state = agent({"conversation_history": [], "applicant_profile": {}})
+    state = agent(state)
+    assert "we'll skip the down payment" in questions[1].lower()
+    assert "credit score" in questions[1].lower()
+    assert "thanks, that helps" not in questions[1].lower()
+    assert state["recently_deferred_field"] == ""
+
+
+def test_skip_acknowledgement_is_not_repeated_on_later_turns(monkeypatch) -> None:
+    questions: list[str] = []
+    replies = iter(["move on", "710", "employed"])
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: next(replies))
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent(
+        [
+            {"field": "down_payment", "question": "How much can you put down?"},
+            {"field": "credit_score", "question": "What is your credit score?"},
+            {"field": "employment_status", "question": "What is your employment status?"},
+        ],
+        "sys",
+    )
+    state = agent({"conversation_history": [], "applicant_profile": {}})
+    state = agent(state)
+    state["applicant_profile"]["credit_score"] = 710
+    state["answered_fields"] = ["credit_score"]
+    state["followup_field"] = "employment_status"
+    agent(state)
+
+    assert "skip the down payment" in questions[1].lower()
+    assert "skip the down payment" not in questions[2].lower()
+
+
+@pytest.mark.parametrize(
+    "answer",
     ["i dont want to tell", "i don't want to tell u", "no idea", "not remember", "no pass"],
 )
 def test_refusal_and_unknown_phrases_defer_field(monkeypatch, answer: str) -> None:
