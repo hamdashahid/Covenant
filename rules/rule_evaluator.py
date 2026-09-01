@@ -95,14 +95,14 @@ class RuleEvaluator:
         rule_breakdown.append({
             "name": "Annual Income",
             "passed": income_passed,
-            "value_display": f"Rs {annual_income:,.0f}",
-            "threshold_display": f"minimum Rs {income_threshold:,.0f} required",
+            "value_display": f"{annual_income:,.0f}",
+            "threshold_display": f"minimum {income_threshold:,.0f} required",
             "explanation": (
-                f"Your yearly income of Rs {annual_income:,.0f} meets the minimum requirement of "
-                f"Rs {income_threshold:,.0f}."
+                f"Your yearly income of {annual_income:,.0f} meets the minimum requirement of "
+                f"{income_threshold:,.0f}."
                 if income_passed else
-                f"Your yearly income of Rs {annual_income:,.0f} is below the minimum requirement of "
-                f"Rs {income_threshold:,.0f}. Lenders need to see you earn enough to comfortably repay the loan."
+                f"Your yearly income of {annual_income:,.0f} is below the minimum requirement of "
+                f"{income_threshold:,.0f}. Lenders need to see you earn enough to comfortably repay the loan."
             ),
         })
 
@@ -211,13 +211,13 @@ class RuleEvaluator:
             rule_breakdown.append({
                 "name": "Down Payment",
                 "passed": down_passed,
-                "value_display": f"Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}%)",
+                "value_display": f"{down_payment:,.0f} ({down_payment_percent * 100:.1f}%)",
                 "threshold_display": f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
                 "explanation": (
-                    f"Your down payment of Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}% of the "
+                    f"Your down payment of {down_payment:,.0f} ({down_payment_percent * 100:.1f}% of the "
                     f"property value) meets the minimum requirement of {min_down_payment_percent * 100:.0f}%."
                     if down_passed else
-                    f"Your down payment of Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}% of the "
+                    f"Your down payment of {down_payment:,.0f} ({down_payment_percent * 100:.1f}% of the "
                     f"property value) is below the minimum requirement of {min_down_payment_percent * 100:.0f}%."
                 ),
             })
@@ -227,13 +227,13 @@ class RuleEvaluator:
                 rule_breakdown.append({
                     "name": "Down Payment",
                     "passed": down_passed,
-                    "value_display": f"Rs {down_payment:,.0f}",
-                    "threshold_display": f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
+                    "value_display": f"{down_payment:,.0f}",
+                    "threshold_display": "a positive amount for this preliminary check",
                     "explanation": (
                         "A zero down payment does not meet the minimum requirement."
                         if not down_passed else
-                        f"You've indicated a down payment of Rs {down_payment:,.0f}, but this check "
-                        "could not be evaluated as a percentage because the property value was not provided."
+                        f"You've indicated a down payment of {down_payment:,.0f}. The final percentage "
+                        "must be checked later when the property value is known."
                     ),
                 })
             else:

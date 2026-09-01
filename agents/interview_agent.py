@@ -1035,6 +1035,16 @@ STRICT RULES:
             }.get(reason, f"We'll leave the {label} unanswered for now.")
             question = f"{acknowledgement} {self._static_question(target_field)}"
 
+        recent_corrections = list(state.get("recent_profile_corrections", []))
+        state["recent_profile_corrections"] = []
+        if recent_corrections:
+            labels = [FIELD_LABELS.get(field, field.replace("_", " ")).lower() for field in recent_corrections]
+            if len(labels) == 1:
+                correction_text = labels[0]
+            else:
+                correction_text = ", ".join(labels[:-1]) + f" and {labels[-1]}"
+            question = f"Thanks for correcting that — I've updated your {correction_text}. {question}"
+
         # ============================================================
         # TRACK EXACT TARGET FIELD
         # ============================================================
@@ -1106,17 +1116,27 @@ STRICT RULES:
         is_greeting = interpreted_intent == Intent.GREETING
 
         opening_reply = re.sub(r"[^a-z\s]", " ", cleaned).strip()
-        opening_context_only = bool(
-            is_opening_turn
-            and re.fullmatch(
-                r"(?:(?:yes|y|yeah|yep)(?:\s+(?:(?:it|this|that)\s+is\s+)?(?:my\s+)?first\s+(?:home|house|property)(?:\s+purchase)?)?|(?:no|nope)(?:\s+(?:(?:it|this|that)\s+is\s+not\s+)?(?:my\s+)?first\s+(?:home|house|property)(?:\s+purchase)?)?)",
+        is_plain_opening_answer = bool(
+            re.fullmatch(r"(?:yes|y|yeah|yep|no|nope)", opening_reply)
+        )
+        is_home_context_answer = bool(
+            re.search(r"\b(?:home|house|property|purchase|one)\b", opening_reply)
+            and re.search(
+                r"\b(?:first|second|third|another|next|previous|before|already|"
+                r"1st|2nd|3rd)\b|\b(?:will be|this is|it is|it will be)\s+my\b",
                 opening_reply,
             )
-            and not re.search(r"\d", cleaned)
-            and not re.search(
+        )
+        mentions_financial_answer = bool(
+            re.search(
                 r"\b(?:down payment|put down|upfront|payment amount|credit|income|debt|savings?)\b",
                 cleaned,
             )
+        )
+        opening_context_only = bool(
+            is_opening_turn
+            and (is_plain_opening_answer or is_home_context_answer)
+            and not mentions_financial_answer
         )
 
         logger.debug(
@@ -1239,6 +1259,15 @@ STRICT RULES:
                 "confidence": 1.0,
                 "needs_clarification": False,
                 "reason": "answered first-home framing question",
+            }
+            state["home_purchase_context"] = {
+                "raw_answer": user_response,
+                "is_first_home": not bool(
+                    re.search(
+                        r"\b(?:no|nope|not|second|third|another|2nd|3rd|previous|before|already)\b",
+                        opening_reply,
+                    )
+                ),
             }
             return state
 

@@ -591,7 +591,19 @@ def test_no_to_first_home_question_does_not_finalize(monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     "opening_answer",
-    ["Yes", "Yes,", "Yes,\\", "yes first home", "yes my first property", "No", "nope"],
+    [
+        "Yes",
+        "Yes,",
+        "Yes,\\",
+        "yes first home",
+        "yes my first property",
+        "No",
+        "nope",
+        "no its my second home",
+        "it will be my second home",
+        "this is my 2nd property",
+        "not my first house",
+    ],
 )
 def test_first_home_answer_advances_to_down_payment_without_skipping(
     monkeypatch, opening_answer: str
@@ -615,6 +627,7 @@ def test_first_home_answer_advances_to_down_payment_without_skipping(
     assert second["current_question_field"] == "down_payment"
     assert second["latest_user_response"] == "30k"
     assert "how much" in questions[1].lower()
+    assert second["home_purchase_context"]["raw_answer"] == opening_answer
 
 
 def test_opening_answer_with_down_payment_information_is_still_extracted(monkeypatch) -> None:
