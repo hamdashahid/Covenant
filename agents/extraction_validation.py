@@ -395,36 +395,34 @@ class ExtractionValidationNode:
         )
         interpreted = state.get("interpreted_input", {}) or {}
         interpreted_value = interpreted.get("value") if isinstance(interpreted, dict) else None
+        interpreted_current_value = None
         if (
             isinstance(interpreted, dict)
             and interpreted.get("intent") == "answer"
             and interpreted_value is not None
             and state.get("current_question_field")
         ):
+            interpreted_current_value = interpreted_value
+        try:
+            raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
+            extraction_failed = False
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.debug("LLM extraction failed", exc_info=True)
             raw = json.dumps(
                 {
-                    "fields": {state["current_question_field"]: interpreted_value},
-                    "confidence": float(interpreted.get("confidence", 0.0)),
-                    "issues": [],
+                    "fields": {},
+                    "confidence": 0.0,
+                    "issues": ["LLM extraction failed; deterministic fallback unavailable"],
                 }
             )
-            extraction_failed = False
-        else:
-            try:
-                raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
-                extraction_failed = False
-            except Exception as exc:  # pragma: no cover - defensive guard
-                logger.debug("LLM extraction failed", exc_info=True)
-                raw = json.dumps(
-                    {
-                        "fields": {},
-                        "confidence": 0.0,
-                        "issues": ["LLM extraction failed; deterministic fallback unavailable"],
-                    }
-                )
-                extraction_failed = True
+            extraction_failed = True
         fields, confidence, parse_issues = self._parse_response(raw)
         current_field = state.get("current_question_field")
+        if interpreted_current_value is not None and current_field:
+            # Preserve the field-locked semantic interpretation while still
+            # allowing other explicitly volunteered facts from the same reply.
+            fields[current_field] = interpreted_current_value
+            confidence = max(confidence, float(interpreted.get("confidence", 0.0)))
         fields = self._limit_fields_to_latest_answer(
             fields,
             state.get("latest_user_response", ""),
@@ -432,6 +430,42 @@ class ExtractionValidationNode:
         )
 
         latest_response = str(state.get("latest_user_response", ""))
+
+        # A literal negative answer is authoritative.  Do not allow an LLM or
+        # intent normalizer to silently turn "-1" into zero, because that can
+        # make invalid financial data look valid and advance the interview.
+        non_negative_numeric_fields = {
+            "down_payment",
+            "monthly_debt",
+            "total_savings",
+            "employment_years",
+            "annual_income",
+            "property_value",
+            "requested_loan_amount",
+        }
+        negative_match = re.search(r"(?<!\w)-\s*\d+(?:[.,]\d+)?(?:\s*[kKmM])?", latest_response)
+        if current_field in non_negative_numeric_fields and negative_match:
+            negative_value = self._parse_float(negative_match.group(0).replace(" ", ""))
+            if negative_value is not None:
+                fields[current_field] = negative_value
+
+        # Normalize time periods explicitly stated by the applicant instead of
+        # trusting the model to guess whether a number is monthly or yearly.
+        stated_number = self._parse_float(latest_response)
+        lowered_response = latest_response.lower()
+        if stated_number is not None and current_field == "annual_income":
+            if re.search(r"\b(?:per\s+month|monthly|a\s+month|each\s+month)\b", lowered_response):
+                fields["annual_income"] = stated_number * 12
+            elif re.search(r"\b(?:per\s+week|weekly|a\s+week|each\s+week)\b", lowered_response):
+                fields["annual_income"] = stated_number * 52
+        elif stated_number is not None and current_field == "monthly_debt":
+            if re.search(r"\b(?:per\s+year|annually|annual|a\s+year|each\s+year)\b", lowered_response):
+                fields["monthly_debt"] = stated_number / 12
+        elif stated_number is not None and current_field == "employment_years":
+            if re.search(r"\bmonths?\b", lowered_response):
+                fields["employment_years"] = stated_number / 12
+            elif re.search(r"\bweeks?\b", lowered_response):
+                fields["employment_years"] = stated_number / 52
 
         if current_field == "employment_years":
             start_year_match = re.search(
@@ -490,8 +524,14 @@ class ExtractionValidationNode:
         if confidence < 0.30:
             validation_issues.append("Extraction confidence too low")
 
+        existing_profile = state.get("applicant_profile", {})
+        corrected_fields = [
+            field
+            for field, value in validated_fields.items()
+            if field in existing_profile and existing_profile[field] != value
+        ]
         merged, conflicts = self.profile_updater.merge(
-            state.get("applicant_profile", {}),
+            existing_profile,
             validated_fields,
         )
 
@@ -502,6 +542,7 @@ class ExtractionValidationNode:
                 answered_fields.append(field)
         state["answered_fields"] = answered_fields
         state["profile_conflicts"] = list(state.get("profile_conflicts", [])) + conflicts
+        state["recent_profile_corrections"] = corrected_fields
         state["last_extraction"] = {
             "raw": raw,
             "fields": fields,

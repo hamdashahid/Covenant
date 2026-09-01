@@ -123,6 +123,57 @@ class TestExtractionHappyPath(unittest.TestCase):
         self.assertEqual(result["applicant_profile"]["monthly_debt"], 0.0)
         self.assertEqual(result["applicant_profile"]["down_payment"], 30000.0)
 
+    def test_volunteered_facts_are_kept_alongside_current_answer(self) -> None:
+        node = make_node(
+            {
+                "fields": {
+                    "employment_status": "employed",
+                    "annual_income": 90000,
+                    "employment_years": 5,
+                },
+                "confidence": 0.95,
+                "issues": [],
+            }
+        )
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "Are you currently employed?",
+            "current_question_field": "employment_status",
+            "latest_user_response": "Yes, I am employed, earn 90,000 and have worked here for 5 years",
+            "interpreted_input": {
+                "intent": "answer",
+                "field": "employment_status",
+                "value": "employed",
+                "confidence": 0.98,
+                "needs_clarification": False,
+                "reason": "explicit employment answer",
+            },
+        }
+
+        result = node(state)
+
+        self.assertEqual(result["applicant_profile"]["employment_status"], "employed")
+        self.assertEqual(result["applicant_profile"]["annual_income"], 90000.0)
+        self.assertEqual(result["applicant_profile"]["employment_years"], 5.0)
+
+    def test_correction_is_exposed_for_natural_acknowledgement(self) -> None:
+        node = make_node(
+            {"fields": {"annual_income": 100000}, "confidence": 0.95, "issues": []}
+        )
+        state = node(
+            {
+                "conversation_history": [],
+                "applicant_profile": {"annual_income": 90000.0},
+                "latest_user_response": "Actually, my annual income is 100,000",
+                "current_question": "How much debt do you pay each month?",
+                "current_question_field": "monthly_debt",
+            }
+        )
+
+        self.assertEqual(state["applicant_profile"]["annual_income"], 100000.0)
+        self.assertEqual(state["recent_profile_corrections"], ["annual_income"])
+
     def test_self_shorthand_is_understood_as_self_employed(self) -> None:
         node = make_node({"fields": {}, "confidence": 0.1, "issues": []})
         state = {
@@ -321,6 +372,42 @@ class TestExtractionValidationRejectsOutOfRangeValues(unittest.TestCase):
         })
         state = node(base_state("-100"))
         self.assertNotIn("monthly_debt", state["applicant_profile"])
+
+    def test_literal_negative_down_payment_cannot_be_normalized_to_zero(self) -> None:
+        node = make_node({"fields": {"down_payment": 0}, "confidence": 0.95, "issues": []})
+        state = node(
+            {
+                "conversation_history": [],
+                "applicant_profile": {},
+                "latest_user_response": "-1",
+                "current_question": "How much can you put down?",
+                "current_question_field": "down_payment",
+            }
+        )
+
+        self.assertNotIn("down_payment", state["applicant_profile"])
+        self.assertIn("down_payment must be >= 0", state["last_extraction"]["issues"])
+
+    def test_explicit_periods_are_normalized(self) -> None:
+        cases = [
+            ("annual_income", "I earn 70,000 monthly", 70000, 840000.0),
+            ("annual_income", "I make 2,000 per week", 2000, 104000.0),
+            ("monthly_debt", "12,000 per year", 12000, 1000.0),
+            ("employment_years", "18 months", 18, 1.5),
+        ]
+        for field, answer, model_value, expected in cases:
+            with self.subTest(field=field, answer=answer):
+                node = make_node({"fields": {field: model_value}, "confidence": 0.95, "issues": []})
+                state = node(
+                    {
+                        "conversation_history": [],
+                        "applicant_profile": {},
+                        "latest_user_response": answer,
+                        "current_question": "Please provide the amount or duration.",
+                        "current_question_field": field,
+                    }
+                )
+                self.assertEqual(state["applicant_profile"][field], expected)
 
     def test_zero_property_value_rejected(self) -> None:
         node = make_node({

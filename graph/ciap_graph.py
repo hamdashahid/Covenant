@@ -54,6 +54,8 @@ class CIAPState(TypedDict, total=False):
     auto_deferred_field: str
     interpreted_input: dict[str, Any]
     recently_deferred_field: str
+    home_purchase_context: dict[str, Any]
+    recent_profile_corrections: list[str]
 
 def build_ciap_graph(
     interview_agent: Any,

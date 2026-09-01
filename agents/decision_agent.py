@@ -135,8 +135,8 @@ class DecisionAgent:
                 rule_item(
                     "Annual Income",
                     income_passed,
-                    f"Rs {annual_income:,.0f}",
-                    f"minimum Rs {income_threshold:,.0f} required",
+                    f"{annual_income:,.0f}",
+                    f"minimum {income_threshold:,.0f} required",
                     "This check was evaluated." if income_passed else "Your income is below the minimum requirement.",
                 )
             )
@@ -146,7 +146,7 @@ class DecisionAgent:
                     "Annual Income",
                     None,
                     "Not provided",
-                    f"minimum Rs {income_threshold:,.0f} required",
+                    f"minimum {income_threshold:,.0f} required",
                     "This check was not evaluated because income information was missing.",
                 )
             )
@@ -267,7 +267,7 @@ class DecisionAgent:
                 rule_item(
                     "Down Payment",
                     down_payment_percent >= min_down_payment_percent,
-                    f"Rs {down_payment:,.0f} ({down_payment_percent * 100:.1f}%)",
+                    f"{down_payment:,.0f} ({down_payment_percent * 100:.1f}%)",
                     f"minimum {min_down_payment_percent * 100:.0f}% of property value required",
                     "This check was evaluated." if down_payment_percent >= min_down_payment_percent else "Your down payment is smaller than required.",
                 )
@@ -308,9 +308,9 @@ class DecisionAgent:
                     "name": "Annual Income",
                     "passed": False,
                     "evaluation_status": "failed",
-                    "value_display": f"Rs {annual_income:,.0f}",
-                    "threshold_display": f"minimum Rs {income_threshold:,.0f} required",
-                    "explanation": f"Your yearly income of Rs {annual_income:,.0f} is below the minimum requirement of Rs {income_threshold:,.0f}.",
+                    "value_display": f"{annual_income:,.0f}",
+                    "threshold_display": f"minimum {income_threshold:,.0f} required",
+                    "explanation": f"Your yearly income of {annual_income:,.0f} is below the minimum requirement of {income_threshold:,.0f}.",
                 }
             )
 
