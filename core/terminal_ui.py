@@ -174,7 +174,9 @@ def _conversational_message(status: str, report: dict[str, Any] | None) -> tuple
             reason = "your income is a bit below what's typically needed"
         elif "Debt-to-Income Ratio" in failed_set:
             reason = "your monthly debt relative to your income is a bit higher than lenders typically allow"
-        elif "Employment Status" in failed_set or "Job Stability" in failed_set:
+        elif "Employment Status" in failed_set:
+            reason = "your current employment status doesn't meet this pre-check's requirement right now"
+        elif "Job Stability" in failed_set:
             reason = "your employment history is the main gap right now"
         elif "Loan-to-Value Ratio" in failed_set:
             reason = "the loan amount relative to the property's value is a bit high"

@@ -13,6 +13,7 @@ from core.conversation_intent import Intent, classify_input
 from core.profile_updater import ProfileUpdater
 from core.schemas import EXTRACTION_SCHEMA
 from graph.ciap_graph import build_ciap_graph
+from core.terminal_ui import _conversational_message
 
 
 class Extractor:
@@ -167,6 +168,58 @@ def test_invalid_credit_score_explains_valid_range(monkeypatch) -> None:
     agent(state)
 
     assert "between 300 and 850" in questions[0]
+
+
+@pytest.mark.parametrize("answer", ["it's close to perfect", "excellent", "pretty good", "poor"])
+def test_qualitative_credit_answer_is_acknowledged_before_requesting_range(
+    monkeypatch, answer: str
+) -> None:
+    questions: list[str] = []
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "780")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent([{"field": "credit_score", "question": "What is your credit score?"}], "sys")
+    state = {
+        "conversation_history": [{"role": "user", "content": answer}],
+        "applicant_profile": {},
+        "latest_user_response": answer,
+        "followup_field": "credit_score",
+        "current_question_field": "credit_score",
+        "last_extraction": {"issues": ["credit_score is unclear"]},
+    }
+
+    agent(state)
+
+    assert answer in questions[0]
+    assert "approximate range" in questions[0].lower()
+    assert questions[0].count("?") == 1
+
+
+def test_down_payment_sentence_is_not_described_as_credit(monkeypatch) -> None:
+    questions: list[str] = []
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "780")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent(
+        [
+            {"field": "down_payment", "question": "How much can you put down?"},
+            {"field": "credit_score", "question": "What is your approximate credit score?"},
+        ],
+        "sys",
+    )
+    state = {
+        "conversation_history": [],
+        "applicant_profile": {"down_payment": 0.0},
+        "latest_user_response": "Yes, but I don't have a down payment.",
+        "current_question_field": "down_payment",
+        "followup_field": "credit_score",
+        "last_extraction": {"issues": ["Extraction confidence too low"]},
+    }
+
+    agent(state)
+
+    assert "general description of your credit" not in questions[0].lower()
+    assert "credit score" in questions[0].lower()
 
 
 def test_move_next_question_defers_current_field(monkeypatch) -> None:
@@ -536,6 +589,54 @@ def test_no_to_first_home_question_does_not_finalize(monkeypatch) -> None:
     assert updated["latest_user_response"] == "no"
 
 
+@pytest.mark.parametrize(
+    "opening_answer",
+    ["Yes", "Yes,", "Yes,\\", "yes first home", "yes my first property", "No", "nope"],
+)
+def test_first_home_answer_advances_to_down_payment_without_skipping(
+    monkeypatch, opening_answer: str
+) -> None:
+    questions: list[str] = []
+    replies = iter([opening_answer, "30k"])
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: next(replies))
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda q, **kwargs: questions.append(q))
+    agent = InterviewAgent(
+        [{"field": "down_payment", "question": "How much can you put down?"}],
+        "sys",
+        llm_client=None,
+    )
+
+    first = agent({"conversation_history": [], "applicant_profile": {}})
+    first_skipped_fields = list(first.get("skipped_fields", []))
+    second = agent(first)
+
+    assert first_skipped_fields == []
+    assert second["current_question_field"] == "down_payment"
+    assert second["latest_user_response"] == "30k"
+    assert "how much" in questions[1].lower()
+
+
+def test_opening_answer_with_down_payment_information_is_still_extracted(monkeypatch) -> None:
+    monkeypatch.setattr(
+        interview_agent_module.terminal_ui,
+        "get_answer_prompt",
+        lambda: "Yes, but I don't have a down payment.",
+    )
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_agent_message", lambda *args, **kwargs: None)
+    agent = InterviewAgent(
+        [{"field": "down_payment", "question": "How much can you put down?"}],
+        "sys",
+        llm_client=None,
+    )
+
+    updated = agent({"conversation_history": [], "applicant_profile": {}})
+
+    assert updated["skip_extraction"] is False
+    assert updated["current_question_field"] == "down_payment"
+
+
 def test_explicit_closing_phrase_still_finalizes() -> None:
     agent = InterviewAgent([], "sys")
     assert agent._detect_finalize_intent(
@@ -555,4 +656,17 @@ def test_graph_persists_retired_status_and_routes_to_rule_evaluator(monkeypatch)
         {"conversation_history": [], "applicant_profile": {}, "max_turns": 1}
     )
     assert final["applicant_profile"]["employment_status"] == "unemployed"
+
+
+def test_unemployed_result_mentions_current_status_not_employment_history() -> None:
+    message, _ = _conversational_message(
+        "Ineligible",
+        {
+            "rule_breakdown": [
+                {"name": "Employment Status", "passed": False, "evaluation_status": "failed"}
+            ]
+        },
+    )
+    assert "current employment status" in message
+    assert "employment history" not in message
 

@@ -150,7 +150,7 @@ class OpenAIClientAdapter:
 
         if re.fullmatch(r"\s*(?:self(?:[ -]+emplo\w*)?|business[ -]?man)\s*", lowered) or re.search(r"\b(self[ -]?employ\w*|freelanc\w*|contractor|business[ -]?man|own (?:a )?business|business owner)\b", lowered):
             fields["employment_status"] = "self-employed"
-        elif re.search(r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|unemploy\w*|out of work|no job|jobless)\b", lowered):
+        elif re.search(r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|unemploy\w*|out of work|no job|jobless|laid[ -]?off|between jobs|looking for (?:a )?(?:job|work)|lost my job|terminated|dismissed|made redundant)\b", lowered):
             fields["employment_status"] = "unemployed"
         elif re.fullmatch(r"\s*emp\s*", lowered) or re.search(r"\b(employ\w*|full[ -]?time|part[ -]?time|working)\b", lowered):
             fields["employment_status"] = "employed"

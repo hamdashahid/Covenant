@@ -203,7 +203,10 @@ class InterviewAgent:
 
         question = self._static_question(field)
         if is_first_turn:
-            return f"Hi! I'm here to help with your mortgage pre-check. {question}"
+            return (
+                "Hi! I'm here to help with your mortgage pre-check. "
+                "Is this your first home purchase?"
+            )
 
         profile = state.get("applicant_profile", {}) or {}
         if field == "credit_score" and "down_payment" in profile:
@@ -264,6 +267,17 @@ class InterviewAgent:
                 "Roughly how much do you currently have saved?"
             ),
         }
+        if (
+            field == "credit_score"
+            and state.get("current_question_field") == "credit_score"
+            and "credit_score" in issues
+        ):
+            latest = str(state.get("latest_user_response", "")).strip()
+            if latest and not re.search(r"\d", latest):
+                return (
+                    f"I understand — '{latest}' sounds like a general description of your credit. "
+                    "Could you give me an approximate range, such as the 700s, high 700s, or 800–850?"
+                )
         if field == "employment_years" and "ambiguous" in issues:
             answer = str(state.get("latest_user_response", "")).strip()
             return (
@@ -828,6 +842,11 @@ STRICT RULES:
                 for message in history
             )
         )
+        # The production interview opens with a first-home framing question,
+        # even though the first profile field is down_payment.  Keep that
+        # special behavior scoped to that exact opening; test/custom policies
+        # may legitimately begin with another field.
+        is_opening_turn = is_first_turn and target_field == "down_payment"
 
         # Validation happens after an answer is entered. On the next graph pass,
         # count that rejected answer once. Three rejected/unclear answers defer
@@ -957,7 +976,7 @@ STRICT RULES:
                 state=state,
                 missing=missing,
                 followup_field=followup_field,
-                is_first_turn=is_first_turn,
+                is_first_turn=is_opening_turn,
             )
         )
 
@@ -989,13 +1008,13 @@ STRICT RULES:
         elif validation_question:
             question = validation_question
         elif needs_contextual_down_payment_followup:
-            question = self._fallback_question(target_field, state, is_first_turn)
+            question = self._fallback_question(target_field, state, is_opening_turn)
         elif not question:
 
             question = self._fallback_question(
                 target_field,
                 state,
-                is_first_turn,
+                is_opening_turn,
             )
 
         auto_deferred_field = state.get("auto_deferred_field")
@@ -1085,6 +1104,20 @@ STRICT RULES:
         )
 
         is_greeting = interpreted_intent == Intent.GREETING
+
+        opening_reply = re.sub(r"[^a-z\s]", " ", cleaned).strip()
+        opening_context_only = bool(
+            is_opening_turn
+            and re.fullmatch(
+                r"(?:(?:yes|y|yeah|yep)(?:\s+(?:(?:it|this|that)\s+is\s+)?(?:my\s+)?first\s+(?:home|house|property)(?:\s+purchase)?)?|(?:no|nope)(?:\s+(?:(?:it|this|that)\s+is\s+not\s+)?(?:my\s+)?first\s+(?:home|house|property)(?:\s+purchase)?)?)",
+                opening_reply,
+            )
+            and not re.search(r"\d", cleaned)
+            and not re.search(
+                r"\b(?:down payment|put down|upfront|payment amount|credit|income|debt|savings?)\b",
+                cleaned,
+            )
+        )
 
         logger.debug(
             "User response=%r cleaned=%r "
@@ -1180,6 +1213,33 @@ STRICT RULES:
                 "stopped_by_user": True,
             }
 
+            return state
+
+        # The warm first-home question is conversational context, not the
+        # down-payment field. A simple yes/no answer must advance to the real
+        # down-payment question without extraction or deferring that field.
+        if opening_context_only and not is_greeting:
+            if not history and self.system_prompt:
+                history.append({"role": "system", "content": self.system_prompt})
+            history.append({"role": "assistant", "content": question})
+            history.append({"role": "user", "content": user_response})
+            state["conversation_history"] = history
+            state["current_question"] = question
+            state["current_question_field"] = "opening_context"
+            state["latest_user_response"] = user_response
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["skip_extraction"] = True
+            state["needs_followup"] = True
+            state["followup_field"] = target_field
+            state["clarification_context"] = ""
+            state["interpreted_input"] = {
+                "intent": "answer",
+                "field": "opening_context",
+                "value": cleaned,
+                "confidence": 1.0,
+                "needs_clarification": False,
+                "reason": "answered first-home framing question",
+            }
             return state
 
         # ============================================================

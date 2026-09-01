@@ -141,6 +141,13 @@ def test_zero_answer_matrix(field: str, question: str, text: str) -> None:
         ("unemployed", "unemployed"), ("not working anymore", "unemployed"),
         ("retired", "unemployed"), ("I am on pension", "unemployed"),
         ("I have no job", "unemployed"),
+        ("I've been recently laid-off and hope to get back to work soon", "unemployed"),
+        ("I was laid off last week", "unemployed"),
+        ("I'm currently between jobs", "unemployed"),
+        ("I am looking for work", "unemployed"),
+        ("I recently lost my job", "unemployed"),
+        ("I was made redundant", "unemployed"),
+        ("I was terminated", "unemployed"),
     ],
 )
 def test_employment_language_matrix(text: str, expected: str) -> None:

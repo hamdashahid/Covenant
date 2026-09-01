@@ -141,7 +141,13 @@ class ExtractionValidationNode:
             return "self-employed"
         if re.search(r"\b(self[ -]?employ\w*|freelanc\w*|contractor|business[ -]?man|own (?:a )?business|business owner)\b", text):
             return "self-employed"
-        if re.search(r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|unemploy\w*|out of work|no job|jobless)\b", text):
+        if re.search(
+            r"\b(retir\w*|pension(?:er|ed)?|not working anymore|no longer working|"
+            r"unemploy\w*|out of work|no job|jobless|laid[ -]?off|layoff|between jobs|"
+            r"looking for (?:a )?(?:job|work)|seeking (?:a )?(?:job|work)|"
+            r"lost my job|terminated|dismissed|made redundant)\b",
+            text,
+        ):
             return "unemployed"
         if re.fullmatch(r"emp|emplo\w*", text):
             return "employed"

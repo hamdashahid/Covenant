@@ -298,6 +298,7 @@ class DecisionAgent:
 
         annual_income = self._coerce_float(profile.get("annual_income"), 0)
         credit_score = self._coerce_int(profile.get("credit_score"), 0)
+        employment_status = str(profile.get("employment_status", "")).strip().lower()
 
         failures: list[dict[str, Any]] = []
 
@@ -325,7 +326,24 @@ class DecisionAgent:
                 }
             )
 
-        if len(failures) >= 2:
+        employment_failure = employment_status == "unemployed"
+        if employment_failure:
+            failures.append(
+                {
+                    "name": "Employment Status",
+                    "passed": False,
+                    "evaluation_status": "failed",
+                    "value_display": "Unemployed / between jobs",
+                    "threshold_display": "must currently be employed or self-employed",
+                    "explanation": (
+                        "Because you are currently between jobs, this pre-check's employment "
+                        "requirement is not met right now. Previous job length and salary are "
+                        "not treated as current employment information."
+                    ),
+                }
+            )
+
+        if employment_failure or len(failures) >= 2:
             return {
                 "status": "Ineligible",
                 "eligible": False,
@@ -339,6 +357,7 @@ class DecisionAgent:
                 "metrics": {
                     "annual_income": annual_income,
                     "credit_score": credit_score,
+                    "employment_status": employment_status,
                 },
             }
         return None
