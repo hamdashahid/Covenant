@@ -85,6 +85,44 @@ class TestDecisionAgent(unittest.TestCase):
         self.assertFalse(result["needs_followup"])
         self.assertEqual(agent.rule_evaluator.called_with, profile)
 
+    def test_skipped_required_field_is_named_in_final_summary(self) -> None:
+        agent = DecisionAgent(rule_evaluator=StubRuleEvaluator({"status": "Eligible"}))
+        profile = {
+            "annual_income": 90000,
+            "monthly_debt": 0,
+            "credit_score": 710,
+            "employment_status": "employed",
+            "employment_years": 5,
+        }
+        result = agent(
+            {"applicant_profile": profile, "skipped_fields": ["down_payment"], "turn_count": 8}
+        )
+        self.assertEqual(result["decision_status"], "Requires More Info")
+        self.assertIn("Down Payment", result["decision_summary"])
+
+    def test_unemployed_status_ends_precheck_without_asking_past_job_questions(self) -> None:
+        evaluator = StubRuleEvaluator({"status": "Eligible"})
+        evaluator.rules = {
+            "income_threshold": 50000,
+            "min_credit_score": 650,
+        }
+        agent = DecisionAgent(rule_evaluator=evaluator)
+        profile = {
+            "down_payment": 0,
+            "credit_score": 800,
+            "employment_status": "unemployed",
+        }
+
+        result = agent({"applicant_profile": profile, "turn_count": 3, "max_turns": 16})
+
+        self.assertEqual(result["decision_status"], "Ineligible")
+        self.assertFalse(result["needs_followup"])
+        self.assertIsNone(result["followup_field"])
+        self.assertIn("Employment Status", result["final_report"]["failed_rules"])
+        self.assertNotIn("employment_years", result["applicant_profile"])
+        self.assertNotIn("annual_income", result["applicant_profile"])
+        self.assertIsNone(evaluator.called_with)
+
     def test_followup_field_is_first_missing_field_in_schema_order(self) -> None:
         agent = DecisionAgent(rule_evaluator=StubRuleEvaluator({"status": "Eligible"}))
         state = {

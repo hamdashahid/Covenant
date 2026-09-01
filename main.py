@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 from pathlib import Path
 
 from agents.decision_agent import DecisionAgent
@@ -125,14 +126,28 @@ def main() -> None:
         auto = 1.0
     decision_agent.set_early_termination_thresholds(offer, auto)
 
+    persistence_warning_shown = False
+
+    def save_without_crashing(save_action) -> None:
+        """Keep the live interview usable if local session storage is unavailable."""
+        nonlocal persistence_warning_shown
+        try:
+            save_action()
+        except (sqlite3.Error, OSError) as exc:
+            if not persistence_warning_shown:
+                persistence_warning_shown = True
+                terminal_ui.print_error(
+                    "I couldn't save this session to disk, but the interview can continue. "
+                    "Please free some space on drive C: before relying on session resume. "
+                    f"Storage error: {exc}"
+                )
+
     def on_turn_complete(updated_state: dict) -> None:
-        store.upsert_profile(
-            session_id=session_id,
-            profile=updated_state.get("applicant_profile", {}),
-            conflicts=updated_state.get("profile_conflicts", []),
+        save_without_crashing(
+            lambda: session_manager.save_state(
+                session_id, updated_state, completed=False
+            )
         )
-        store.replace_messages(session_id=session_id, messages=updated_state.get("conversation_history", []))
-        session_manager.save_state(session_id, updated_state, completed=False)
 
     def on_completed(updated_state: dict) -> None:
         report = updated_state.get("final_report", {})
@@ -143,11 +158,14 @@ def main() -> None:
             final_tags.extend([str(tag) for tag in updated_state["session_tags"] if tag not in final_tags])
         if not final_tags and updated_state.get("decision_status") == "Stopped by User":
             final_tags.append("Stopped")
-        try:
-            store.close_session(session_id=session_id, report=report, tags=final_tags or None)
-        except TypeError:
-            store.close_session(session_id=session_id, report=report)
-        session_manager.save_state(session_id, updated_state, completed=True)
+        def persist_completion() -> None:
+            try:
+                store.close_session(session_id=session_id, report=report, tags=final_tags or None)
+            except TypeError:
+                store.close_session(session_id=session_id, report=report)
+            session_manager.save_state(session_id, updated_state, completed=True)
+
+        save_without_crashing(persist_completion)
 
     graph = build_ciap_graph(
         interview_agent=interview_agent,

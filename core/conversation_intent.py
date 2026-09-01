@@ -31,6 +31,19 @@ def classify_input(text: str | None) -> ClassifiedInput:
     """Classify conversation control language before field extraction."""
     cleaned = _normalize(text)
 
+    # A user may wrap a control request in frustration or extra language.
+    # Honor an explicit request to continue before interpreting words such as
+    # "shut up" as a request to terminate the whole interview.
+    embedded_skip = (
+        r"\bskip(?: this)?(?: question)?\b",
+        r"\bmove on\b",
+        r"\bmove (?:to )?(?:the )?next(?: question| ques| quest)?\b",
+        r"\b(?:go to|ask) (?:the )?next(?: question| ques)?\b",
+        r"\bjust (?:move on|skip it)\b",
+    )
+    if any(re.search(pattern, cleaned) for pattern in embedded_skip):
+        return ClassifiedInput(Intent.SKIP, cleaned)
+
     stop_patterns = (
         r"/?(?:stop|end)",
         r"(?:please )?(?:shut ?up|leave me alone)",
@@ -51,6 +64,7 @@ def classify_input(text: str | None) -> ClassifiedInput:
         r"pass",
         r"next(?: question| ques)?",
         r"move (?:to )?(?:the )?next(?: question| ques| quest)?",
+        r"move on",
         r"ask (?:the )?next(?: question| ques)?",
         r"no[ ,_-]*pass",
     )
