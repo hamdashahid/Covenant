@@ -53,18 +53,29 @@ class OpenAIClientAdapter:
                 )
         return self._fallback_extract(latest_response, "OpenAI API error: unknown failure")
 
-    def interpret_input(
+    def understand_turn(
         self,
         current_field: str | None,
         current_question: str,
         user_response: str,
         profile: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Interpret one applicant turn with a strict, field-locked contract."""
+        """Understand one whole applicant turn using a single semantic contract."""
         if not self._client:
             return None
+        field_properties = {
+            "down_payment": {"type": ["number", "null"]},
+            "credit_score": {"type": ["number", "null"]},
+            "employment_status": {"type": ["string", "null"]},
+            "employment_years": {"type": ["number", "null"]},
+            "annual_income": {"type": ["number", "null"]},
+            "total_savings": {"type": ["number", "null"]},
+            "monthly_debt": {"type": ["number", "null"]},
+            "property_value": {"type": ["number", "null"]},
+            "requested_loan_amount": {"type": ["number", "null"]},
+        }
         schema = {
-            "name": "mortgage_applicant_turn",
+            "name": "mortgage_turn_understanding",
             "strict": True,
             "schema": {
                 "type": "object",
@@ -76,20 +87,42 @@ class OpenAIClientAdapter:
                     },
                     "field": {"type": ["string", "null"]},
                     "value": {"type": ["number", "string", "null"]},
+                    "fields": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": field_properties,
+                        "required": list(field_properties),
+                    },
+                    "corrections": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": list(field_properties)},
+                    },
+                    "uncertainty": {
+                        "type": "string",
+                        "enum": ["exact", "estimate", "range", "unknown", "not_applicable"],
+                    },
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "needs_clarification": {"type": "boolean"},
                     "reason": {"type": "string"},
                 },
-                "required": ["intent", "field", "value", "confidence", "needs_clarification", "reason"],
+                "required": [
+                    "intent", "field", "value", "fields", "corrections", "uncertainty",
+                    "confidence", "needs_clarification", "reason"
+                ],
             },
         }
         prompt = (
-            "Interpret the applicant's latest reply in the context of exactly one mortgage question. "
-            "The current field is authoritative: never assign a bare answer to another field. "
+            "Understand the applicant's entire latest reply in the context of the mortgage interview. "
+            "Return every explicitly supplied mortgage fact in fields, even when several facts appear in one reply. "
+            "Use null for fields not explicitly supplied. The current field controls only ambiguous bare answers; "
+            "explicitly named extra facts belong to their own fields. Identify corrections to existing profile values. "
             "Understand meaning rather than matching exact wording. A clear absence such as 'I have no "
             "down payment' or 'I do not pay debt' is an answer with numeric value 0. 'I do not know' is "
             "unknown. 'I do not want to share' is refusal. A request to explain the question is clarification. "
-            "Return intent=answer only when the reply supplies a usable value or categorical answer. "
+            "For monthly income convert it to annual income; for annual debt convert it to monthly debt; "
+            "represent job months as fractional years. Never turn a negative number into zero. "
+            "Return intent=answer when at least one usable fact is supplied. Set value to the current field's "
+            "value when supplied, otherwise null. "
             f"Current field: {current_field}\nCurrent question: {current_question}\n"
             f"Existing profile: {json.dumps(profile)}\nApplicant reply: {user_response}"
         )
@@ -102,7 +135,15 @@ class OpenAIClientAdapter:
                 messages=[{"role": "user", "content": prompt}],
             )
             parsed = json.loads(response.choices[0].message.content or "{}")
-            return parsed if isinstance(parsed, dict) else None
+            if not isinstance(parsed, dict):
+                return None
+            parsed_fields = parsed.get("fields", {})
+            if isinstance(parsed_fields, dict):
+                parsed["fields"] = {
+                    key: value for key, value in parsed_fields.items() if value is not None
+                }
+            parsed["understanding_version"] = 1
+            return parsed
         except Exception as exc:  # pragma: no cover - deterministic fallback remains available
             self.last_interpretation_error = f"{type(exc).__name__}: {exc}"
             if not self._interpretation_warning_emitted:
@@ -112,6 +153,16 @@ class OpenAIClientAdapter:
                 )
                 self._interpretation_warning_emitted = True
             return None
+
+    def interpret_input(
+        self,
+        current_field: str | None,
+        current_question: str,
+        user_response: str,
+        profile: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Backward-compatible alias for callers using the older method name."""
+        return self.understand_turn(current_field, current_question, user_response, profile)
 
     def generate_reply(self, system_prompt: str, messages: list[dict[str, str]]) -> str:
         """
