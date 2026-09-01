@@ -772,9 +772,17 @@ STRICT RULES:
                 "confidence": 1.0,
                 "needs_clarification": deterministic.intent == Intent.CLARIFICATION,
                 "reason": "deterministic control intent",
+                "fields": {},
+                "corrections": [],
+                "uncertainty": (
+                    "unknown" if deterministic.intent == Intent.UNKNOWN else "not_applicable"
+                ),
+                "understanding_version": 1,
             }
 
-        interpreter = getattr(self.llm_client, "interpret_input", None)
+        interpreter = getattr(self.llm_client, "understand_turn", None)
+        if not interpreter:
+            interpreter = getattr(self.llm_client, "interpret_input", None)
         if interpreter:
             try:
                 result = interpreter(
@@ -788,6 +796,10 @@ STRICT RULES:
                 if isinstance(result, dict):
                     intent = Intent(str(result.get("intent", "answer")))
                     result["field"] = target_field
+                    result.setdefault("fields", {})
+                    result.setdefault("corrections", [])
+                    result.setdefault("uncertainty", "not_applicable")
+                    result.setdefault("understanding_version", 1)
                     return intent, result
             except (ValueError, TypeError, json.JSONDecodeError):
                 logger.debug("Structured input interpretation was unusable", exc_info=True)
@@ -799,6 +811,10 @@ STRICT RULES:
             "confidence": 0.0,
             "needs_clarification": False,
             "reason": "offline field-specific extraction required",
+            "fields": {},
+            "corrections": [],
+            "uncertainty": "not_applicable",
+            "understanding_version": 1,
         }
 
     # ================================================================
@@ -1095,6 +1111,7 @@ STRICT RULES:
             state, target_field, question, user_response
         )
         state["interpreted_input"] = interpreted
+        state["turn_understanding"] = interpreted
 
         affirmative_without_value = bool(
             target_field in {
@@ -1119,6 +1136,14 @@ STRICT RULES:
         is_plain_opening_answer = bool(
             re.fullmatch(r"(?:yes|y|yeah|yep|no|nope)", opening_reply)
         )
+        is_elliptical_opening_answer = bool(
+            re.fullmatch(
+                r"(?:yes|y|yeah|yep)\s+(?:(?:it|this|that)\s+)?(?:is|will\s+be)"
+                r"|(?:no|nope)\s+(?:(?:it|this|that)\s+)?(?:is\s+not|isn\s*t|"
+                r"will\s+not\s+be|won\s*t\s+be)",
+                opening_reply,
+            )
+        )
         is_home_context_answer = bool(
             re.search(r"\b(?:home|house|property|purchase|one)\b", opening_reply)
             and re.search(
@@ -1135,7 +1160,11 @@ STRICT RULES:
         )
         opening_context_only = bool(
             is_opening_turn
-            and (is_plain_opening_answer or is_home_context_answer)
+            and (
+                is_plain_opening_answer
+                or is_elliptical_opening_answer
+                or is_home_context_answer
+            )
             and not mentions_financial_answer
         )
 
@@ -1259,7 +1288,12 @@ STRICT RULES:
                 "confidence": 1.0,
                 "needs_clarification": False,
                 "reason": "answered first-home framing question",
+                "fields": {},
+                "corrections": [],
+                "uncertainty": "not_applicable",
+                "understanding_version": 1,
             }
+            state["turn_understanding"] = state["interpreted_input"]
             state["home_purchase_context"] = {
                 "raw_answer": user_response,
                 "is_first_home": not bool(

@@ -17,6 +17,11 @@ class StubLLM:
         return json.dumps(self.payload)
 
 
+class NoSecondSemanticCallLLM:
+    def extract_structured(self, prompt: str, latest_response: str) -> str:
+        raise AssertionError("single semantic understanding must be reused")
+
+
 def make_node(payload) -> ExtractionValidationNode:
     return ExtractionValidationNode(
         llm_client=StubLLM(payload),
@@ -148,6 +153,40 @@ class TestExtractionHappyPath(unittest.TestCase):
                 "confidence": 0.98,
                 "needs_clarification": False,
                 "reason": "explicit employment answer",
+            },
+        }
+
+        result = node(state)
+
+        self.assertEqual(result["applicant_profile"]["employment_status"], "employed")
+        self.assertEqual(result["applicant_profile"]["annual_income"], 90000.0)
+        self.assertEqual(result["applicant_profile"]["employment_years"], 5.0)
+
+    def test_single_turn_understanding_is_reused_without_second_llm_call(self) -> None:
+        node = ExtractionValidationNode(
+            NoSecondSemanticCallLLM(), ContextBuilder(), ProfileUpdater(), EXTRACTION_SCHEMA
+        )
+        state = {
+            "conversation_history": [],
+            "applicant_profile": {},
+            "current_question": "Are you currently employed?",
+            "current_question_field": "employment_status",
+            "latest_user_response": "I am employed, earn 90,000 and have worked here for 5 years",
+            "interpreted_input": {
+                "understanding_version": 1,
+                "intent": "answer",
+                "field": "employment_status",
+                "value": "employed",
+                "fields": {
+                    "employment_status": "employed",
+                    "annual_income": 90000,
+                    "employment_years": 5,
+                },
+                "corrections": [],
+                "uncertainty": "exact",
+                "confidence": 0.98,
+                "needs_clarification": False,
+                "reason": "three explicit facts",
             },
         }
 

@@ -403,19 +403,37 @@ class ExtractionValidationNode:
             and state.get("current_question_field")
         ):
             interpreted_current_value = interpreted_value
-        try:
-            raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
-            extraction_failed = False
-        except Exception as exc:  # pragma: no cover - defensive guard
-            logger.debug("LLM extraction failed", exc_info=True)
+        has_semantic_contract = bool(
+            isinstance(interpreted, dict)
+            and interpreted.get("understanding_version") == 1
+            and isinstance(interpreted.get("fields"), dict)
+        )
+        if has_semantic_contract:
             raw = json.dumps(
                 {
-                    "fields": {},
-                    "confidence": 0.0,
-                    "issues": ["LLM extraction failed; deterministic fallback unavailable"],
+                    "fields": interpreted.get("fields", {}),
+                    "confidence": float(interpreted.get("confidence", 0.0)),
+                    "issues": [],
                 }
             )
-            extraction_failed = True
+            extraction_failed = False
+        else:
+            # Compatibility path for older adapters and tests. Production uses
+            # the single semantic contract above and does not make a second
+            # language-understanding API call for the same applicant reply.
+            try:
+                raw = self.llm_client.extract_structured(prompt, state.get("latest_user_response", ""))
+                extraction_failed = False
+            except Exception as exc:  # pragma: no cover - defensive guard
+                logger.debug("LLM extraction failed", exc_info=True)
+                raw = json.dumps(
+                    {
+                        "fields": {},
+                        "confidence": 0.0,
+                        "issues": ["LLM extraction failed; deterministic fallback unavailable"],
+                    }
+                )
+                extraction_failed = True
         fields, confidence, parse_issues = self._parse_response(raw)
         current_field = state.get("current_question_field")
         if interpreted_current_value is not None and current_field:

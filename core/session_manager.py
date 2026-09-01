@@ -18,6 +18,7 @@ class SessionManager:
         "last_extraction",
         "home_purchase_context",
         "recent_profile_corrections",
+        "turn_understanding",
     )
 
     def __init__(self, store: SQLiteStore, default_model_id: str = "claude-sonnet-4-6") -> None:
