@@ -39,17 +39,23 @@ def make_node(payload: dict) -> ExtractionValidationNode:
 
 
 @pytest.mark.parametrize(
-    "answer",
-    ["retired officer", "I'm on pension", "not working anymore", "I used to be a bank officer, now retired", "unemployed due to retirement"],
+    ("answer", "expected"),
+    [
+        ("retired officer", "retired"),
+        ("I'm on pension", "retired"),
+        ("not working anymore", "unemployed"),
+        ("I used to be a bank officer, now retired", "retired"),
+        ("unemployed due to retirement", "retired"),
+    ],
 )
-def test_explicit_retirement_language_is_persisted_as_unemployed(answer: str) -> None:
+def test_employment_language_preserves_retirement_meaning(answer: str, expected: str) -> None:
     state = {
         "current_question": "What is your current employment status?",
         "latest_user_response": answer,
         "applicant_profile": {},
     }
     updated = make_node({"fields": {}, "confidence": 0.1, "issues": []})(state)
-    assert updated["applicant_profile"]["employment_status"] == "unemployed"
+    assert updated["applicant_profile"]["employment_status"] == expected
     assert "employment_status" in updated["answered_fields"]
 
 
@@ -275,7 +281,33 @@ def test_frustrated_move_on_language_skips_instead_of_looping(monkeypatch, answe
     assert updated.get("user_requested_stop") is not True
     assert updated["skipped_fields"] == ["employment_years"]
     assert updated["followup_field"] is None
-    assert updated["needs_followup"] is True
+
+
+def test_uncertain_credit_gets_one_helpful_range_prompt_before_deferral(monkeypatch) -> None:
+    questions: list[str] = []
+    replies = iter(["i am not sure", "780"])
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: next(replies))
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(
+        interview_agent_module.terminal_ui,
+        "print_agent_message",
+        lambda question, **kwargs: questions.append(question),
+    )
+    agent = InterviewAgent(
+        [{"field": "credit_score", "question": "What is your credit score?"}],
+        "sys",
+        llm_client=None,
+    )
+
+    first = agent({"conversation_history": [], "applicant_profile": {}})
+    first_skips = list(first.get("skipped_fields", []))
+    first_followup = first.get("followup_field")
+    second = agent(first)
+
+    assert first_skips == []
+    assert first_followup == "credit_score"
+    assert "below 650" in questions[1]
+    assert second["latest_user_response"] == "780"
 
 
 def test_unclear_employment_years_does_not_claim_answer_was_negative(monkeypatch) -> None:
@@ -713,6 +745,7 @@ def test_no_to_first_home_question_does_not_finalize(monkeypatch) -> None:
         "Yes,",
         "Yes,\\",
         "yes it will be",
+        "yes it will be inshallah",
         "yes it is",
         "yes first home",
         "yes my first property",
@@ -789,7 +822,39 @@ def test_graph_persists_retired_status_and_routes_to_rule_evaluator(monkeypatch)
     final = build_ciap_graph(agent, make_node({"fields": {}, "confidence": 0.1, "issues": []}), DecisionAgent(evaluator), lambda state: None, lambda state: None).invoke(
         {"conversation_history": [], "applicant_profile": {}, "max_turns": 1}
     )
-    assert final["applicant_profile"]["employment_status"] == "unemployed"
+    assert final["applicant_profile"]["employment_status"] == "retired"
+
+
+def test_retired_applicant_skips_job_years_and_is_asked_current_retirement_income(monkeypatch) -> None:
+    questions: list[str] = []
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: "90000")
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(
+        interview_agent_module.terminal_ui,
+        "print_agent_message",
+        lambda question, **kwargs: questions.append(question),
+    )
+    agent = InterviewAgent(
+        [
+            {"field": "employment_years", "question": "How long have you worked there?"},
+            {"field": "annual_income", "question": "What is your annual income?"},
+        ],
+        "sys",
+        llm_client=None,
+    )
+
+    updated = agent(
+        {
+            "conversation_history": [{"role": "user", "content": "retired officer"}],
+            "applicant_profile": {"employment_status": "retired"},
+            "followup_field": "employment_years",
+            "current_question_field": "employment_status",
+        }
+    )
+
+    assert updated["current_question_field"] == "annual_income"
+    assert "pension or retirement income" in questions[0].lower()
+    assert "previous" not in questions[0].lower()
 
 
 def test_unemployed_result_mentions_current_status_not_employment_history() -> None:

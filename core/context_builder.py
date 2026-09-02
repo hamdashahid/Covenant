@@ -20,7 +20,7 @@ class ContextBuilder:
             "explicitly and unambiguously states that value. Do NOT infer, guess, assume, or "
             "fill in a field based on context, tone, other turns, or what seems likely (e.g. do "
             "not infer employment status from age alone; do recognize an explicit statement that "
-            "the applicant is retired or on a pension as unemployed, and do not "
+            "the applicant is retired or on a pension as retired (not unemployed), and do not "
             "infer a value of 0 or 'none' for a field the applicant did not address). If the "
             "latest response does not clearly address a field, omit that field entirely — never "
             "use placeholder values like 0, 'none', 'unknown', or '' to represent an unanswered "

@@ -23,7 +23,7 @@ EXTRACTION_SCHEMA = {
     "annual_income": "number (>0)",
     "monthly_debt": "number (>=0)",
     "credit_score": "integer (300-850)",
-    "employment_status": "string (e.g. employed, self-employed, unemployed)",
+    "employment_status": "string (employed, self-employed, unemployed, or retired)",
     "employment_years": "number (>=0) — years at current job/business",
     "property_value": "number (>0) — appraised or purchase price of the property",
     "requested_loan_amount": "number (>0) — amount the applicant wants to borrow",

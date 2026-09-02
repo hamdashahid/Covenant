@@ -336,9 +336,9 @@ class DecisionAgent:
                     "value_display": "Unemployed / between jobs",
                     "threshold_display": "must currently be employed or self-employed",
                     "explanation": (
-                        "Because you are currently between jobs, this pre-check's employment "
-                        "requirement is not met right now. Previous job length and salary are "
-                        "not treated as current employment information."
+                        "Your current status does not meet this pre-check's requirement for "
+                        "current employment or self-employment. Previous job length and salary "
+                        "are not treated as current employment information."
                     ),
                 }
             )
@@ -364,7 +364,10 @@ class DecisionAgent:
 
     def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         profile = state.get("applicant_profile", {})
-        missing = [field for field in ELIGIBILITY_REQUIRED_FIELDS if field not in profile]
+        required_fields = list(ELIGIBILITY_REQUIRED_FIELDS)
+        if profile.get("employment_status") == "retired":
+            required_fields = [field for field in required_fields if field != "employment_years"]
+        missing = [field for field in required_fields if field not in profile]
         skipped_fields = set(state.get("skipped_fields", []))
         actionable_missing = [field for field in missing if field not in skipped_fields]
         max_turns = int(state.get("max_turns", 8))

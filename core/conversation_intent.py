@@ -84,7 +84,7 @@ def classify_input(text: str | None) -> ClassifiedInput:
         r"(?:i )?(?:don'?t|do not) know",
         r"(?:i )?(?:don'?t|do not|can'?t|cannot) remember",
         r"(?:i have )?no idea",
-        r"not (?:sure|certain|remember|pretty sure|preety sure)",
+        r"(?:(?:i am|i'm) )?not (?:sure|certain|remember|pretty sure|preety sure)",
         r"unknown",
         r"no answer",
         r"(?:i )?(?:couldn'?t|could not|can'?t|cannot) estimate(?: it| that| my score)?(?: right now)?",

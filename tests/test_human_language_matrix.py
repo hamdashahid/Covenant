@@ -39,7 +39,7 @@ def test_skip_language_matrix(text: str) -> None:
     "text",
     [
         "I don't know", "I do not know", "don't know", "no idea", "I have no idea",
-        "I can't remember", "I cannot remember", "not sure", "not certain", "unknown",
+        "I can't remember", "I cannot remember", "not sure", "I am not sure", "not certain", "unknown",
         "no answer", "not remember", "not pretty sure", "not preety sure",
         "I couldn’t estimate my score right now", "I could not estimate my score right now",
     ],
@@ -139,7 +139,7 @@ def test_zero_answer_matrix(field: str, question: str, text: str) -> None:
         ("business man", "self-employed"), ("business owner", "self-employed"),
         ("I own a business", "self-employed"), ("contractor", "self-employed"),
         ("unemployed", "unemployed"), ("not working anymore", "unemployed"),
-        ("retired", "unemployed"), ("I am on pension", "unemployed"),
+        ("retired", "retired"), ("I am on pension", "retired"),
         ("I have no job", "unemployed"),
         ("I've been recently laid-off and hope to get back to work soon", "unemployed"),
         ("I was laid off last week", "unemployed"),
