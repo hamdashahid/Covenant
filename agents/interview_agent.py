@@ -8,6 +8,7 @@ from typing import Any
 from core import terminal_ui
 from core.conversation_intent import Intent, classify_input
 from core.schemas import FIELD_LABELS
+from core.response_planner import build_response_plan
 
 logger = logging.getLogger(__name__)
 
@@ -210,22 +211,17 @@ class InterviewAgent:
 
         profile = state.get("applicant_profile", {}) or {}
         if field == "credit_score" and "down_payment" in profile:
-            amount = float(profile["down_payment"])
-            shown = f"{amount:,.0f}"
-            return f"I've noted {shown} for the down payment. What is your approximate credit score?"
+            return "What is your approximate credit score?"
         if field == "employment_status" and "credit_score" in profile:
-            qualifier = "rough estimate" if re.search(r"\b(?:maybe|about|around|roughly|not sure|no sure)\b", latest) else "score"
-            return f"That's helpful — I've noted {int(profile['credit_score'])} as a {qualifier}. Are you currently employed, self-employed, or between jobs?"
+            return "And what is your current work situation — employed, self-employed, or between jobs?"
         if field == "employment_years" and profile.get("employment_status"):
-            return f"Got it, you're {profile['employment_status']}. How long have you been in your current job or business?"
+            return "How long have you been in your current role or business?"
         if field == "annual_income" and "employment_years" in profile:
-            years = float(profile["employment_years"])
-            shown = f"{years:g} year" + ("" if years == 1 else "s")
-            return f"Thanks — I've noted {shown} in your current work. Roughly what do you earn in a year before tax?"
+            return "What do you typically earn in a year before tax?"
         if field == "total_savings" and "annual_income" in profile:
-            return "Thanks, that gives me a clearer picture. Separate from the down payment, roughly how much do you have in savings?"
+            return "Separate from the down payment, roughly how much do you have in savings?"
 
-        return "Thanks, that helps. " + question
+        return question
 
     def _validation_followup_question(
         self,
@@ -275,7 +271,7 @@ class InterviewAgent:
             latest = str(state.get("latest_user_response", "")).strip()
             if latest and not re.search(r"\d", latest):
                 return (
-                    f"I understand — '{latest}' sounds like a general description of your credit. "
+                    "I understand — that gives me a general sense of your credit. "
                     "Could you give me an approximate range, such as the 700s, high 700s, or 800–850?"
                 )
         if field == "employment_years" and "ambiguous" in issues:
@@ -402,6 +398,7 @@ class InterviewAgent:
         response: str,
         state: dict[str, Any],
         is_first_turn: bool,
+        response_plan: dict[str, Any] | None = None,
     ) -> str:
         """Enforce factual and one-question boundaries on model wording."""
         latest = str(state.get("latest_user_response", ""))
@@ -431,6 +428,68 @@ class InterviewAgent:
                 if "?" not in part or index == keep_question
             ]
             response = " ".join(parts)
+
+        plan = response_plan or {"allow_value_echo": True}
+        mode = str(plan.get("mode", ""))
+        question_only_modes = {
+            "direct_transition",
+            "brief_transition",
+            "contextual_transition",
+            "correction",
+        }
+        if mode in question_only_modes and "?" in response:
+            # Routine mortgage interviewing sounds more natural without a
+            # praise/thanks sentence before every question. Keep the final
+            # question, where relevant context can still be expressed.
+            sentence_parts = re.split(r"(?<=[.!])\s+", response)
+            question_parts = [part.strip() for part in sentence_parts if "?" in part]
+            if question_parts:
+                response = question_parts[-1]
+            question_start = re.search(
+                r"\b(?:And\s+)?(?:What|How|Are|Is|Do|Does|Could|Can|Would|Will|"
+                r"Roughly|About|Separate)\b",
+                response,
+            )
+            if question_start and question_start.start() > 0:
+                response = response[question_start.start():]
+
+        if not plan.get("allow_value_echo", False):
+            latest_numbers = {
+                token.replace(",", "").lower()
+                for token in re.findall(r"[-+]?\d[\d,]*(?:\.\d+)?[kKmM]?", latest)
+            }
+            response_numbers = {
+                token.replace(",", "").lower()
+                for token in re.findall(r"[-+]?\d[\d,]*(?:\.\d+)?[kKmM]?", response)
+            }
+            if latest_numbers & response_numbers:
+                return ""
+
+        opener_patterns = {
+            "thanks": r"^(?:thanks|thank you)(?:\s+for[^,.!?]*)?[,.!—-]*\s*",
+            "got_it": r"^got it[,.!—-]*\s*",
+            "helpful": r"^that(?:'s| is) helpful[,.!—-]*\s*",
+            "great": r"^great[,.!—-]*\s*",
+            "perfect": r"^perfect[,.!—-]*\s*",
+            "okay": r"^(?:okay|ok)[,.!—-]*\s*",
+        }
+        lowered_response = response.lower().strip()
+        response_opener = next(
+            (name for name, pattern in opener_patterns.items() if re.search(pattern, lowered_response)),
+            None,
+        )
+        if response_opener:
+            recent_assistant = [
+                str(message.get("content", "")).lower().strip()
+                for message in state.get("conversation_history", [])
+                if message.get("role") == "assistant"
+            ][-2:]
+            if any(re.search(opener_patterns[response_opener], previous) for previous in recent_assistant):
+                response = re.sub(
+                    opener_patterns[response_opener], "", response, count=1, flags=re.IGNORECASE
+                ).lstrip()
+                if response:
+                    response = response[0].upper() + response[1:]
 
         return response.strip()
 
@@ -525,11 +584,31 @@ class InterviewAgent:
             )
         )
 
+        previous_field = state.get("current_question_field")
+        extraction_issues = [
+            str(issue).lower()
+            for issue in state.get("last_extraction", {}).get("issues", [])
+        ]
+        is_actual_followup = bool(
+            state.get("clarification_context")
+            or (
+                previous_field == target_field
+                and any(target_field in issue for issue in extraction_issues)
+            )
+        )
+
+        response_plan = build_response_plan(
+            state,
+            target_field,
+            is_opening=is_first_turn,
+            is_followup=is_actual_followup,
+        ).as_dict()
+
         # ============================================================
         # BUILD STRICT INSTRUCTION
         # ============================================================
 
-        if followup_field:
+        if is_actual_followup:
             clarification_context = state.get("clarification_context", "")
             instruction = f"""
 The applicant needs clarification about exactly this topic:
@@ -612,6 +691,9 @@ Previously asked fields:
 Recent question history:
 {question_history[-5:]}
 
+Response plan for this turn:
+{response_plan}
+
 CURRENT TARGET FIELD:
 {target_field}
 
@@ -635,6 +717,10 @@ STRICT RULES:
     validation, or technical implementation.
 11. Do not calculate eligibility.
 12. Do not promise unsupported actions.
+13. Follow the response plan's conversational mode.
+14. Do not repeat the applicant's number or exact answer unless the plan allows it.
+15. Do not praise routine financial facts. A direct transition is often more natural.
+16. Avoid recently used openers, especially "Thanks", "Got it", "Great", and "That's helpful".
 """
 
         prompt = (
@@ -669,7 +755,9 @@ STRICT RULES:
             if not response:
                 return ""
 
-            response = self._sanitize_generated_response(response, state, is_first_turn)
+            response = self._sanitize_generated_response(
+                response, state, is_first_turn, response_plan
+            )
             if not self._response_matches_target(response, target_field, is_first_turn):
                 logger.debug(
                     "Discarding generated question that drifted from target field %r",
@@ -1011,12 +1099,12 @@ STRICT RULES:
         if state.get("clarification_context"):
             if state.get("clarification_context") == "affirmative_without_value":
                 prompts = {
-                    "credit_score": "Great — what is your approximate credit score?",
-                    "down_payment": "Thanks — roughly how much could you put down?",
-                    "employment_years": "Thanks — about how many years have you been there?",
-                    "annual_income": "Thanks — roughly how much do you earn per year before tax?",
-                    "total_savings": "Thanks — roughly how much do you have saved?",
-                    "monthly_debt": "Thanks — roughly how much do you pay toward debts each month?",
+                    "credit_score": "What is your approximate credit score?",
+                    "down_payment": "Roughly how much could you put down?",
+                    "employment_years": "About how many years have you been there?",
+                    "annual_income": "Roughly how much do you earn per year before tax?",
+                    "total_savings": "Roughly how much do you have saved?",
+                    "monthly_debt": "Roughly how much do you pay toward debts each month?",
                 }
                 question = prompts.get(target_field, self._clarifying_question(target_field))
             else:
