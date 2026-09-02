@@ -24,6 +24,14 @@ class Extractor:
         return json.dumps(self.payload)
 
 
+class GeneratedReply:
+    def __init__(self, reply: str) -> None:
+        self.reply = reply
+
+    def generate_reply(self, system_prompt: str, messages: list[dict[str, str]]) -> str:
+        return self.reply
+
+
 def make_node(payload: dict) -> ExtractionValidationNode:
     return ExtractionValidationNode(
         Extractor(payload), ContextBuilder(), ProfileUpdater(), EXTRACTION_SCHEMA
@@ -171,7 +179,7 @@ def test_invalid_credit_score_explains_valid_range(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("answer", ["it's close to perfect", "excellent", "pretty good", "poor"])
-def test_qualitative_credit_answer_is_acknowledged_before_requesting_range(
+def test_qualitative_credit_answer_is_understood_without_robotic_repetition(
     monkeypatch, answer: str
 ) -> None:
     questions: list[str] = []
@@ -190,7 +198,8 @@ def test_qualitative_credit_answer_is_acknowledged_before_requesting_range(
 
     agent(state)
 
-    assert answer in questions[0]
+    assert answer not in questions[0]
+    assert "general sense" in questions[0].lower()
     assert "approximate range" in questions[0].lower()
     assert questions[0].count("?") == 1
 
@@ -502,7 +511,7 @@ def test_short_affirmative_is_understood() -> None:
     assert "yep" in agent.AFFIRMATIVE
 
 
-def test_fallback_question_uses_collected_context() -> None:
+def test_fallback_question_does_not_repeat_collected_number() -> None:
     agent = InterviewAgent([{"field": "credit_score", "question": "Do you know your approximate credit score?"}], "sys")
 
     question = agent._fallback_question(
@@ -511,8 +520,116 @@ def test_fallback_question_uses_collected_context() -> None:
         False,
     )
 
-    assert "30,000" in question
+    assert "30,000" not in question
+    assert "noted" not in question.lower()
     assert question.count("?") == 1
+
+
+def test_generated_response_echoing_latest_number_is_rejected() -> None:
+    agent = InterviewAgent([], "sys")
+    cleaned = agent._sanitize_generated_response(
+        "I've noted 30,000. What is your approximate credit score?",
+        {"latest_user_response": "around 30,000"},
+        False,
+        {"allow_value_echo": False},
+    )
+    assert cleaned == ""
+
+
+def test_repeated_robotic_opener_is_removed() -> None:
+    agent = InterviewAgent([], "sys")
+    cleaned = agent._sanitize_generated_response(
+        "Thanks for sharing that. What is your approximate credit score?",
+        {
+            "latest_user_response": "30k",
+            "conversation_history": [
+                {"role": "assistant", "content": "Thanks for sharing that. How much can you put down?"}
+            ],
+        },
+        False,
+        {"allow_value_echo": False},
+    )
+    assert cleaned == "What is your approximate credit score?"
+
+
+@pytest.mark.parametrize(
+    ("generated", "expected"),
+    [
+        (
+            "That's exciting! How much are you planning to put down as a down payment?",
+            "How much are you planning to put down as a down payment?",
+        ),
+        (
+            "Being a freelancer is great. How long have you been freelancing?",
+            "How long have you been freelancing?",
+        ),
+        (
+            "Four years sounds like solid experience. What is your annual income?",
+            "What is your annual income?",
+        ),
+        (
+            "Thanks for sharing your income details. What are your monthly debt payments?",
+            "What are your monthly debt payments?",
+        ),
+    ],
+)
+def test_routine_generated_praise_is_removed(generated: str, expected: str) -> None:
+    agent = InterviewAgent([], "sys")
+    cleaned = agent._sanitize_generated_response(
+        generated,
+        {"latest_user_response": "routine answer"},
+        False,
+        {"mode": "contextual_transition", "allow_value_echo": False},
+    )
+    assert cleaned == expected
+
+
+@pytest.mark.parametrize(
+    ("target", "previous", "generated", "expected"),
+    [
+        (
+            "credit_score",
+            "down_payment",
+            "No worries about the down payment. Could you let me know your credit score?",
+            "Could you let me know your credit score?",
+        ),
+        (
+            "employment_years",
+            "employment_status",
+            "Being a freelancer is quite flexible! How long have you been doing freelance work?",
+            "How long have you been doing freelance work?",
+        ),
+        (
+            "annual_income",
+            "employment_years",
+            "Freelancing for four years is solid experience. Could you share your annual income?",
+            "Could you share your annual income?",
+        ),
+    ],
+)
+def test_next_missing_field_is_not_mistaken_for_clarification(
+    target: str, previous: str, generated: str, expected: str
+) -> None:
+    agent = InterviewAgent(
+        [{"field": target, "question": f"What is your {target}?"}],
+        "sys",
+        llm_client=GeneratedReply(generated),
+    )
+    state = {
+        "conversation_history": [{"role": "user", "content": "routine answer"}],
+        "applicant_profile": {},
+        "latest_user_response": "routine answer",
+        "current_question_field": previous,
+        "followup_field": target,
+        "last_extraction": {"issues": []},
+        "turn_count": 2,
+    }
+
+    question = agent._generate_conversational_question(
+        state, [target], target, is_first_turn=False
+    )
+
+    assert question == expected
 
 
 def test_generated_response_does_not_invent_currency() -> None:
