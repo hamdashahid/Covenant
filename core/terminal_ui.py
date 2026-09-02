@@ -158,7 +158,8 @@ def _conversational_message(status: str, report: dict[str, Any] | None) -> tuple
     if status == "Eligible":
         return (
             "Good news! Based on the information you provided, your income, "
-            "credit score, and employment history meet this pre-check's current "
+            "credit score, and current financial profile meet this pre-check's "
+            "current "
             "requirements. This is an initial assessment rather than a final "
             "mortgage approval.",
             None,

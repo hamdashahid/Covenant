@@ -117,10 +117,10 @@ class TestRuleEvaluatorBoundaries(unittest.TestCase):
         report = self.evaluator.evaluate(profile)
         self.assertFalse(self._rule(report, "Employment Status")["passed"])
 
-    def test_unrecognized_status_fails(self) -> None:
+    def test_retired_status_is_supported(self) -> None:
         profile = dict(BASE_ELIGIBLE_PROFILE, employment_status="retired")
         report = self.evaluator.evaluate(profile)
-        self.assertFalse(self._rule(report, "Employment Status")["passed"])
+        self.assertTrue(self._rule(report, "Employment Status")["passed"])
 
     # --- Job stability: min 2 years ---
     def test_employment_years_exactly_at_min_passes(self) -> None:

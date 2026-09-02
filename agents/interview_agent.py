@@ -105,6 +105,11 @@ class InterviewAgent:
             item["field"]
             for item in self.interview_policy
         ]
+        if profile.get("employment_status") == "retired":
+            policy_order = [field for field in policy_order if field != "employment_years"]
+            if followup_field == "employment_years":
+                followup_field = None
+                state["followup_field"] = None
 
         # A field is missing when it has not yet been successfully
         # stored in the applicant profile.
@@ -218,6 +223,8 @@ class InterviewAgent:
             return "How long have you been in your current role or business?"
         if field == "annual_income" and "employment_years" in profile:
             return "What do you typically earn in a year before tax?"
+        if field == "annual_income" and profile.get("employment_status") == "retired":
+            return "About how much regular pension or retirement income do you receive in a year?"
         if field == "total_savings" and "annual_income" in profile:
             return "Separate from the down payment, roughly how much do you have in savings?"
 
@@ -604,6 +611,13 @@ class InterviewAgent:
             is_followup=is_actual_followup,
         ).as_dict()
 
+        retirement_instruction = ""
+        if target_field == "annual_income" and state.get("applicant_profile", {}).get("employment_status") == "retired":
+            retirement_instruction = (
+                "The applicant is retired. Ask about current regular pension, retirement, investment, "
+                "rental, benefit, or other recurring yearly income. Never ask about their previous salary."
+            )
+
         # ============================================================
         # BUILD STRICT INSTRUCTION
         # ============================================================
@@ -699,6 +713,9 @@ CURRENT TARGET FIELD:
 
 CURRENT TARGET TOPIC:
 {field_label}
+
+APPLICANT-SPECIFIC GUIDANCE:
+{retirement_instruction}
 """
 
         strict_rules = """
@@ -1107,6 +1124,11 @@ STRICT RULES:
                     "monthly_debt": "Roughly how much do you pay toward debts each month?",
                 }
                 question = prompts.get(target_field, self._clarifying_question(target_field))
+            elif state.get("clarification_context") == "credit_score_uncertain":
+                question = (
+                    "That's okay — would you place it roughly below 650, between 650 and 749, "
+                    "or 750 and above? If you really don't know, you can say skip."
+                )
             else:
                 question = self._clarifying_question(target_field)
         elif validation_question:
@@ -1222,7 +1244,7 @@ STRICT RULES:
 
         opening_reply = re.sub(r"[^a-z\s]", " ", cleaned).strip()
         is_plain_opening_answer = bool(
-            re.fullmatch(r"(?:yes|y|yeah|yep|no|nope)", opening_reply)
+            re.match(r"^(?:yes|y|yeah|yep|no|nope)\b", opening_reply)
         )
         is_elliptical_opening_answer = bool(
             re.fullmatch(
@@ -1487,6 +1509,22 @@ STRICT RULES:
                 )
             state["needs_followup"] = True
             return state
+
+        if interpreted_intent == Intent.UNKNOWN and target_field == "credit_score":
+            attempt = self._count_unresolved(state, target_field)
+            if attempt < 2:
+                history.append({"role": "assistant", "content": question})
+                history.append({"role": "user", "content": user_response})
+                state["conversation_history"] = history
+                state["current_question"] = question
+                state["current_question_field"] = target_field
+                state["latest_user_response"] = user_response
+                state["turn_count"] = int(state.get("turn_count", 0)) + 1
+                state["skip_extraction"] = True
+                state["needs_followup"] = True
+                state["followup_field"] = target_field
+                state["clarification_context"] = "credit_score_uncertain"
+                return state
 
         if interpreted_intent in {Intent.SKIP, Intent.UNKNOWN, Intent.REFUSAL}:
             history.append({"role": "assistant", "content": question})

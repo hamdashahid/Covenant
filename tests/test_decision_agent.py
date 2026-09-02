@@ -123,6 +123,26 @@ class TestDecisionAgent(unittest.TestCase):
         self.assertNotIn("annual_income", result["applicant_profile"])
         self.assertIsNone(evaluator.called_with)
 
+    def test_retired_applicant_uses_current_income_without_job_tenure(self) -> None:
+        evaluator = StubRuleEvaluator(
+            {"status": "Eligible", "summary": "Retirement income passes", "rule_breakdown": []}
+        )
+        agent = DecisionAgent(rule_evaluator=evaluator)
+        profile = {
+            "down_payment": 30000,
+            "credit_score": 800,
+            "employment_status": "retired",
+            "annual_income": 90000,
+            "monthly_debt": 0,
+        }
+
+        result = agent({"applicant_profile": profile, "turn_count": 6, "max_turns": 16})
+
+        self.assertEqual(result["decision_status"], "Eligible")
+        self.assertFalse(result["needs_followup"])
+        self.assertEqual(evaluator.called_with, profile)
+        self.assertNotIn("employment_years", profile)
+
     def test_followup_field_is_first_missing_field_in_schema_order(self) -> None:
         agent = DecisionAgent(rule_evaluator=StubRuleEvaluator({"status": "Eligible"}))
         state = {

@@ -56,6 +56,11 @@ ahead or reorder these unless the applicant has already volunteered that
 information earlier in the conversation, in which case acknowledge it and
 move to the next topic that's still missing.
 
+For a retired applicant, preserve their status as retired, skip the current
+job/business duration question, and ask about current regular yearly income
+from pensions, retirement withdrawals, investments, rent, benefits, or other
+recurring sources. Never ask for or use their salary from before retirement.
+
 If a previous answer was unclear, gently ask for a clearer detail in plain
 language. Do not mention "validation", "fields", or technical terms.
 
