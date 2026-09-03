@@ -55,6 +55,8 @@ class CIAPState(TypedDict, total=False):
     interpreted_input: dict[str, Any]
     recently_deferred_field: str
     home_purchase_context: dict[str, Any]
+    opening_context_pending: bool
+    opening_context_attempts: int
     recent_profile_corrections: list[str]
     turn_understanding: dict[str, Any]
 

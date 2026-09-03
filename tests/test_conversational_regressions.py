@@ -13,7 +13,7 @@ from core.conversation_intent import Intent, classify_input
 from core.profile_updater import ProfileUpdater
 from core.schemas import EXTRACTION_SCHEMA
 from graph.ciap_graph import build_ciap_graph
-from core.terminal_ui import _conversational_message
+from core.terminal_ui import _closing_transition, _conversational_message, print_summary
 
 
 class Extractor:
@@ -385,7 +385,10 @@ def test_skipped_field_is_acknowledged_before_next_question(monkeypatch) -> None
         ],
         "sys",
     )
-    state = agent({"conversation_history": [], "applicant_profile": {}})
+    state = agent({
+        "conversation_history": [{"role": "assistant", "content": "How much can you put down?"}],
+        "applicant_profile": {},
+    })
     state = agent(state)
     assert "we'll skip the down payment" in questions[1].lower()
     assert "credit score" in questions[1].lower()
@@ -407,7 +410,10 @@ def test_skip_acknowledgement_is_not_repeated_on_later_turns(monkeypatch) -> Non
         ],
         "sys",
     )
-    state = agent({"conversation_history": [], "applicant_profile": {}})
+    state = agent({
+        "conversation_history": [{"role": "assistant", "content": "How much can you put down?"}],
+        "applicant_profile": {},
+    })
     state = agent(state)
     state["applicant_profile"]["credit_score"] = 710
     state["answered_fields"] = ["credit_score"]
@@ -804,6 +810,70 @@ def test_opening_answer_with_down_payment_information_is_still_extracted(monkeyp
     assert updated["current_question_field"] == "down_payment"
 
 
+def test_unclear_opening_answer_reasks_first_home_without_touching_down_payment(monkeypatch) -> None:
+    questions: list[str] = []
+    replies = iter(["abcd", "yes", "30k"])
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: next(replies))
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(
+        interview_agent_module.terminal_ui,
+        "print_agent_message",
+        lambda question, **kwargs: questions.append(question),
+    )
+    agent = InterviewAgent(
+        [{"field": "down_payment", "question": "How much can you put down?"}],
+        "sys",
+        llm_client=None,
+    )
+
+    first = agent({"conversation_history": [], "applicant_profile": {}})
+    first_pending = first["opening_context_pending"]
+    first_skipped = list(first.get("skipped_fields", []))
+    first_profile = dict(first["applicant_profile"])
+    second = agent(first)
+    second_home_context = dict(second["home_purchase_context"])
+    third = agent(second)
+
+    assert first_pending is True
+    assert first_skipped == []
+    assert "down_payment" not in first_profile
+    assert "first home" in questions[1].lower()
+    assert "down payment" not in questions[1].lower()
+    assert second_home_context["is_first_home"] is True
+    assert third["current_question_field"] == "down_payment"
+    assert "how much" in questions[2].lower()
+
+
+def test_two_unclear_opening_answers_continue_without_looping_or_skipping_down_payment(monkeypatch) -> None:
+    questions: list[str] = []
+    replies = iter(["abcd", "something random", "30k"])
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: next(replies))
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(
+        interview_agent_module.terminal_ui,
+        "print_agent_message",
+        lambda question, **kwargs: questions.append(question),
+    )
+    agent = InterviewAgent(
+        [{"field": "down_payment", "question": "How much can you put down?"}],
+        "sys",
+        llm_client=None,
+    )
+
+    first = agent({"conversation_history": [], "applicant_profile": {}})
+    second = agent(first)
+    second_pending = second["opening_context_pending"]
+    second_home_context = dict(second["home_purchase_context"])
+    second_skipped = list(second.get("skipped_fields", []))
+    third = agent(second)
+
+    assert second_pending is False
+    assert second_home_context["is_first_home"] is None
+    assert second_skipped == []
+    assert third["current_question_field"] == "down_payment"
+    assert "how much" in questions[2].lower()
+
+
 def test_explicit_closing_phrase_still_finalizes() -> None:
     agent = InterviewAgent([], "sys")
     assert agent._detect_finalize_intent(
@@ -853,7 +923,8 @@ def test_retired_applicant_skips_job_years_and_is_asked_current_retirement_incom
     )
 
     assert updated["current_question_field"] == "annual_income"
-    assert "pension or retirement income" in questions[0].lower()
+    assert questions[0].lower().startswith("since you're retired")
+    assert "pensions, investments, or other sources" in questions[0].lower()
     assert "previous" not in questions[0].lower()
 
 
@@ -868,4 +939,153 @@ def test_unemployed_result_mentions_current_status_not_employment_history() -> N
     )
     assert "current employment status" in message
     assert "employment history" not in message
+
+
+def test_zero_down_payment_result_is_specific_and_recognizes_strengths() -> None:
+    message, _ = _conversational_message(
+        "Ineligible",
+        {
+            "rule_breakdown": [
+                {"name": "Annual Income", "passed": True},
+                {"name": "Credit Score", "passed": True},
+                {"name": "Debt-to-Income Ratio", "passed": True},
+                {"name": "Down Payment", "passed": False},
+            ]
+        },
+        {
+            "down_payment": 0.0,
+            "monthly_debt": 0.0,
+            "employment_status": "self-employed",
+        },
+    )
+
+    assert "credit profile looks encouraging" in message.lower()
+    assert "no monthly debt payments" in message.lower()
+    assert "requires an amount greater than zero" in message.lower()
+    assert "a bit below" not in message.lower()
+
+
+def test_retired_summary_uses_contextual_label_and_clean_money(capsys) -> None:
+    print_summary(
+        {
+            "down_payment": 0.0,
+            "credit_score": 800,
+            "employment_status": "retired",
+            "annual_income": 900000.0,
+            "monthly_debt": 0.0,
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "Current Yearly Income" in output
+    assert "900,000" in output
+    assert "900000.0" not in output
+    assert "Years at Current Job" not in output
+    assert "Total Savings" not in output
+
+
+@pytest.mark.parametrize(
+    ("state", "target", "expected"),
+    [
+        (
+            {
+                "current_question_field": "opening_context",
+                "home_purchase_context": {"is_first_home": True},
+            },
+            "down_payment",
+            "buying your first home is a big step",
+        ),
+        (
+            {
+                "current_question_field": "credit_score",
+                "applicant_profile": {"credit_score": 830},
+            },
+            "employment_status",
+            "strong credit position",
+        ),
+        (
+            {
+                "current_question_field": "annual_income",
+                "applicant_profile": {"annual_income": 120000},
+            },
+            "monthly_debt",
+            "strong income base",
+        ),
+        (
+            {
+                "current_question_field": "annual_income",
+                "applicant_profile": {"annual_income": 20000},
+            },
+            "monthly_debt",
+            "clear starting point",
+        ),
+    ],
+)
+def test_value_aware_transition_reacts_to_meaning_without_echoing_value(
+    state: dict, target: str, expected: str
+) -> None:
+    transition = InterviewAgent([], "sys")._value_aware_transition(state, target)
+
+    assert expected in transition.lower()
+    assert not any(character.isdigit() for character in transition)
+
+
+def test_value_aware_transition_is_neutral_on_routine_middle_income() -> None:
+    transition = InterviewAgent([], "sys")._value_aware_transition(
+        {
+            "current_question_field": "annual_income",
+            "applicant_profile": {"annual_income": 70000},
+        },
+        "monthly_debt",
+    )
+
+    assert transition == ""
+
+
+def test_vague_down_payment_is_clarified_instead_of_recorded_as_zero() -> None:
+    class IncorrectZeroInterpreter:
+        def understand_turn(self, *args, **kwargs):
+            return {
+                "intent": "answer",
+                "value": 0,
+                "fields": {"down_payment": 0},
+                "confidence": 0.9,
+            }
+
+    agent = InterviewAgent([], "sys", llm_client=IncorrectZeroInterpreter())
+    intent, understood = agent._interpret_input(
+        {},
+        "down_payment",
+        "How much can you put down?",
+        "I have not that much down payment",
+    )
+
+    assert intent == Intent.CLARIFICATION
+    assert understood["value"] is None
+    assert understood["fields"] == {}
+    assert understood["reason"] == "vague monetary amount"
+
+
+def test_credit_requirement_question_answers_before_reasking() -> None:
+    question = InterviewAgent([], "sys")._clarifying_question("credit_score")
+
+    assert "at least 650" in question
+    assert question.endswith("?")
+
+
+def test_monthly_debt_explanation_answers_user_and_reasks_amount() -> None:
+    question = InterviewAgent([], "sys")._clarifying_question("monthly_debt")
+
+    assert "credit cards" in question.lower()
+    assert "personal loans" in question.lower()
+    assert "say 0" in question.lower()
+    assert "monthly total" in question.lower()
+    assert question.endswith("?")
+
+
+def test_closing_transition_acknowledges_zero_debt() -> None:
+    transition = _closing_transition({"monthly_debt": 0.0})
+
+    assert "no monthly debt payments" in transition.lower()
+    assert "put everything together" in transition.lower()
 

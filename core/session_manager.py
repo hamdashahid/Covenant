@@ -17,6 +17,8 @@ class SessionManager:
         "followup_field",
         "last_extraction",
         "home_purchase_context",
+        "opening_context_pending",
+        "opening_context_attempts",
         "recent_profile_corrections",
         "turn_understanding",
     )

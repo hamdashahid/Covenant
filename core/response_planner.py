@@ -71,5 +71,6 @@ def build_response_plan(
         )
     return HumanResponsePlan(
         "direct_transition",
-        "Ask the next question directly. No acknowledgement is needed; natural interviewers do not thank after every answer.",
+        "Ask the next question directly. The application may add a brief value-aware reaction on selected turns; "
+        "do not add a generic acknowledgement yourself.",
     )
