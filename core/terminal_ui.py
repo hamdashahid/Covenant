@@ -115,8 +115,19 @@ def print_summary(profile: dict[str, Any]) -> None:
     print(Fore.BLUE + Style.BRIGHT + "Collected Information".center(width))
     print(Fore.BLUE + Style.BRIGHT + "-" * width + Style.RESET_ALL)
     for key in REQUIRED_FIELDS:
+        # Savings is useful background but is not part of the current decision.
+        # Do not make a completed interview look unfinished when it was not asked.
+        if key == "total_savings" and key not in profile:
+            continue
+        # Current-job duration does not apply to a retired applicant.
+        if key == "employment_years" and profile.get("employment_status") == "retired" and key not in profile:
+            continue
         label = FIELD_LABELS[key]
+        if key == "annual_income" and profile.get("employment_status") == "retired":
+            label = "Current Yearly Income"
         value = profile.get(key, "—")
+        if key in {"down_payment", "annual_income", "total_savings", "monthly_debt"} and isinstance(value, (int, float)):
+            value = f"{value:,.0f}"
         print(f"  {label:<24}: " + Fore.YELLOW + str(value) + Style.RESET_ALL)
     print(Fore.BLUE + Style.BRIGHT + "-" * width + Style.RESET_ALL)
 
@@ -147,21 +158,46 @@ def print_tag_view(store: Any) -> None:
             print(f"  - {conversation['session_id']} [{status}]")
 
 
-def _conversational_message(status: str, report: dict[str, Any] | None) -> tuple[str, str | None]:
+def _conversational_message(
+    status: str,
+    report: dict[str, Any] | None,
+    profile: dict[str, Any] | None = None,
+) -> tuple[str, str | None]:
     """Build a short, human, Sir's-bot-style message instead of a rule-by-rule audit.
 
     Returns (main_message, follow_up_question_or_None).
     """
     rule_breakdown = (report or {}).get("rule_breakdown", [])
     failed = [r["name"] for r in rule_breakdown if not r.get("passed")]
+    passed = {r["name"] for r in rule_breakdown if r.get("passed")}
+    profile = profile or {}
+
+    positive_points: list[str] = []
+    if "Credit Score" in passed:
+        positive_points.append("your credit profile looks encouraging")
+    if "Annual Income" in passed:
+        income_wording = (
+            "your current retirement income meets the requirement"
+            if profile.get("employment_status") == "retired"
+            else "your income meets the requirement"
+        )
+        positive_points.append(income_wording)
+    if "Debt-to-Income Ratio" in passed and profile.get("monthly_debt") == 0:
+        positive_points.append("having no monthly debt payments also helps")
+
+    def strengths_sentence() -> str:
+        if not positive_points:
+            return ""
+        if len(positive_points) == 1:
+            return positive_points[0].capitalize() + ". "
+        return (", ".join(positive_points[:-1]) + ", and " + positive_points[-1]).capitalize() + ". "
 
     if status == "Eligible":
         return (
-            "Good news! Based on the information you provided, your income, "
-            "credit score, and current financial profile meet this pre-check's "
-            "current "
-            "requirements. This is an initial assessment rather than a final "
-            "mortgage approval.",
+            "Good news! "
+            + strengths_sentence()
+            + "Based on what you've shared, you meet this pre-check's current requirements. "
+            "This is an initial assessment rather than a final mortgage approval.",
             None,
         )
 
@@ -182,7 +218,14 @@ def _conversational_message(status: str, report: dict[str, Any] | None) -> tuple
         elif "Loan-to-Value Ratio" in failed_set:
             reason = "the loan amount relative to the property's value is a bit high"
         elif "Down Payment" in failed_set:
-            reason = "your down payment is a bit below what's typically required"
+            if profile.get("down_payment") == 0:
+                return (
+                    strengths_sentence()
+                    + "The remaining issue is the down payment: this pre-check requires an amount greater than zero. "
+                    "Because no down payment is currently available, I can't mark the application eligible yet.",
+                    None,
+                )
+            reason = "your down payment is below this pre-check's current requirement"
         else:
             reason = "a couple of areas in your profile need a bit more work"
 
@@ -193,6 +236,16 @@ def _conversational_message(status: str, report: dict[str, Any] | None) -> tuple
         )
 
     return (None, None)
+
+
+def _closing_transition(profile: dict[str, Any]) -> str:
+    """Bridge the final answer into the result like a human interviewer."""
+    if profile.get("monthly_debt") == 0:
+        return (
+            "Understood — having no monthly debt payments helps. "
+            "Let me put everything together for you."
+        )
+    return "That gives me the last piece I needed. Let me put everything together for you."
 
 
 def print_final_result(status: str, summary: str, profile: dict[str, Any], report: dict[str, Any] | None = None) -> None:
@@ -215,6 +268,9 @@ def print_final_result(status: str, summary: str, profile: dict[str, Any], repor
         headline = "MORE INFORMATION NEEDED"
         icon = "\u26a0\ufe0f"
 
+    if status in {"Eligible", "Ineligible"}:
+        print_agent_message(_closing_transition(profile))
+
     # ---- Missing-info / stopped case: no rule breakdown available ----
     if not report or "rule_breakdown" not in report:
         print()
@@ -233,7 +289,7 @@ def print_final_result(status: str, summary: str, profile: dict[str, Any], repor
     print(color + Style.BRIGHT + "=" * width + Style.RESET_ALL)
 
     # ---- Conversational message + call-to-action (Sir's-bot style) ----
-    message, follow_up = _conversational_message(status, report)
+    message, follow_up = _conversational_message(status, report, profile)
     print()
     if message:
         print(Style.BRIGHT + message + Style.RESET_ALL)

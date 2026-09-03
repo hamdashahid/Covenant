@@ -221,10 +221,13 @@ class InterviewAgent:
             return "And what is your current work situation — employed, self-employed, or between jobs?"
         if field == "employment_years" and profile.get("employment_status"):
             return "How long have you been in your current role or business?"
+        if field == "annual_income" and profile.get("employment_status") == "retired":
+            return (
+                "Since you're retired, about how much regular yearly income do you receive "
+                "from pensions, investments, or other sources?"
+            )
         if field == "annual_income" and "employment_years" in profile:
             return "What do you typically earn in a year before tax?"
-        if field == "annual_income" and profile.get("employment_status") == "retired":
-            return "About how much regular pension or retirement income do you receive in a year?"
         if field == "total_savings" and "annual_income" in profile:
             return "Separate from the down payment, roughly how much do you have in savings?"
 
@@ -312,15 +315,93 @@ class InterviewAgent:
             return prompts.get(field, "That value doesn't look valid. Could you try again?")
         return ""
 
+    def _value_aware_transition(
+        self,
+        state: dict[str, Any],
+        target_field: str | None,
+    ) -> str:
+        """React to selected answers without judging or praising every value."""
+        previous_field = state.get("current_question_field")
+        if not previous_field or previous_field == target_field:
+            return ""
+
+        profile = state.get("applicant_profile", {}) or {}
+
+        def choose(options: tuple[str, ...]) -> str:
+            session_seed = sum(ord(char) for char in str(state.get("session_id", "")))
+            index = (session_seed + int(state.get("turn_count", 0))) % len(options)
+            return options[index]
+
+        if previous_field == "opening_context":
+            first_home = (state.get("home_purchase_context", {}) or {}).get("is_first_home")
+            if first_home is True:
+                return choose((
+                    "That's exciting — buying your first home is a big step.",
+                    "How exciting — a first home is a meaningful milestone.",
+                    "That's a wonderful goal — let's build a clear picture together.",
+                ))
+            if first_home is False:
+                return choose((
+                    "Understood — having bought before gives us some useful context.",
+                    "That helps — your previous buying experience gives us some context.",
+                ))
+            return "No problem — we can continue without that detail."
+
+        value = profile.get(previous_field)
+        if value is None:
+            return ""
+
+        if previous_field == "down_payment" and float(value) == 0:
+            return "I understand — we can still look at the rest of your situation."
+
+        if previous_field == "credit_score":
+            score = int(value)
+            if score >= 750:
+                return choose((
+                    "That puts you in a strong credit position.",
+                    "Your credit appears to be in good shape.",
+                    "That sounds like a healthy credit profile.",
+                ))
+            if score < 600:
+                return choose((
+                    "Thanks for being open about that — we'll look at the full picture.",
+                    "That's okay — credit is only one part of the picture.",
+                ))
+
+        if previous_field == "employment_years" and float(value) >= 5:
+            return "That shows good continuity in your work."
+
+        if previous_field == "annual_income":
+            income = float(value)
+            if income >= 100000:
+                return choose((
+                    "That gives you a strong income base.",
+                    "That sounds like a solid income foundation.",
+                    "Your income gives us a positive starting point.",
+                ))
+            if income < 30000:
+                return choose((
+                    "That's okay — it gives us a clear starting point.",
+                    "Thanks for sharing that — we'll consider it alongside everything else.",
+                    "Understood — let's look at the rest of the picture as well.",
+                ))
+
+        return ""
+
     def _clarifying_question(self, field: str | None) -> str:
         """Give a concrete answer to a field question without repeating it verbatim."""
         examples = {
             "down_payment": "I mean the amount you could pay upfront toward the home price — even a rough amount is helpful.",
-            "credit_score": "I mean the three-digit score from your credit report; an approximate range is fine if you do not know the exact number.",
+            "credit_score": "For this pre-check, we generally look for a three-digit score of at least 650. Do you know your exact score or approximate range?",
             "employment_status": "I just need to know whether you are currently employed, self-employed, or not working — retirement or pension income counts as not working for this check.",
             "employment_years": "I mean how long you have been in your current job or business; a rough number of years is fine.",
             "annual_income": "I mean your total yearly income before tax; a rough annual amount is fine.",
             "total_savings": "I mean all savings you have set aside, separate from the amount you plan to use as a down payment.",
+            "monthly_debt": (
+                "Monthly debt means the total you regularly pay each month toward things like "
+                "credit cards, personal loans, car finance, or other borrowed money. "
+                "If you do not make any debt payments, you can say 0; otherwise, what is your rough monthly total?"
+            ),
         }
         return examples.get(field, "Could you tell me a little more about that?")
 
@@ -615,7 +696,8 @@ class InterviewAgent:
         if target_field == "annual_income" and state.get("applicant_profile", {}).get("employment_status") == "retired":
             retirement_instruction = (
                 "The applicant is retired. Ask about current regular pension, retirement, investment, "
-                "rental, benefit, or other recurring yearly income. Never ask about their previous salary."
+                "rental, benefit, or other recurring yearly income. Use a natural transition such as "
+                "'Since you're retired, ...'. Never ask about their previous salary."
             )
 
         # ============================================================
@@ -868,6 +950,31 @@ STRICT RULES:
     ) -> tuple[Intent, dict[str, Any]]:
         """Use one semantic interpreter; retain deterministic control fallbacks."""
         deterministic = classify_input(user_response)
+
+        # "Not much" describes an uncertain amount, not zero. Clarify it
+        # before a language model can make an unsupported numeric assumption.
+        vague_amount = bool(
+            target_field in {"down_payment", "annual_income", "total_savings", "monthly_debt"}
+            and not re.search(r"\d", user_response or "")
+            and re.fullmatch(
+                r"(?:i (?:have|make|earn|pay) )?(?:not (?:that )?much|very little|a little|some|a small amount)(?: (?:available|saved|income|debt|down payment))?",
+                deterministic.normalized_text,
+            )
+        )
+        if vague_amount:
+            return Intent.CLARIFICATION, {
+                "intent": "clarification",
+                "field": target_field,
+                "value": None,
+                "confidence": 1.0,
+                "needs_clarification": True,
+                "reason": "vague monetary amount",
+                "fields": {},
+                "corrections": [],
+                "uncertainty": "range",
+                "understanding_version": 1,
+            }
+
         # Obvious control commands must remain reliable even during API failure.
         if deterministic.intent in {Intent.STOP, Intent.SKIP, Intent.REFUSAL, Intent.UNKNOWN, Intent.CLARIFICATION, Intent.GREETING}:
             return deterministic.intent, {
@@ -967,7 +1074,8 @@ STRICT RULES:
         # even though the first profile field is down_payment.  Keep that
         # special behavior scoped to that exact opening; test/custom policies
         # may legitimately begin with another field.
-        is_opening_turn = is_first_turn and target_field == "down_payment"
+        is_opening_retry = bool(state.get("opening_context_pending"))
+        is_opening_turn = (is_first_turn or is_opening_retry) and target_field == "down_payment"
 
         # Validation happens after an answer is entered. On the next graph pass,
         # count that rejected answer once. Three rejected/unclear answers defer
@@ -1129,6 +1237,17 @@ STRICT RULES:
                     "That's okay — would you place it roughly below 650, between 650 and 749, "
                     "or 750 and above? If you really don't know, you can say skip."
                 )
+            elif state.get("clarification_context") == "vague_amount":
+                vague_prompts = {
+                    "down_payment": (
+                        "That's understandable. Even a rough estimate would help — are we talking "
+                        "about a few thousand, tens of thousands, or nothing available right now?"
+                    ),
+                    "annual_income": "No problem — what would be your best rough yearly estimate?",
+                    "total_savings": "No problem — what would be your best rough estimate of your savings?",
+                    "monthly_debt": "No problem — what would be your best rough monthly estimate?",
+                }
+                question = vague_prompts.get(target_field, self._clarifying_question(target_field))
             else:
                 question = self._clarifying_question(target_field)
         elif validation_question:
@@ -1170,6 +1289,26 @@ STRICT RULES:
             else:
                 correction_text = ", ".join(labels[:-1]) + f" and {labels[-1]}"
             question = f"Thanks for correcting that — I've updated your {correction_text}. {question}"
+
+        # Show a brief, meaning-aware reaction on selected turns. Special
+        # clarification/correction turns already contain an acknowledgement.
+        can_add_reaction = not any(
+            (
+                validation_question,
+                state.get("clarification_context"),
+                auto_deferred_field,
+                recently_deferred,
+                recent_corrections,
+                is_opening_retry,
+            )
+        )
+
+        if is_opening_retry:
+            question = "I didn't quite understand that. Will this be your first home purchase?"
+        if can_add_reaction:
+            reaction = self._value_aware_transition(state, target_field)
+            if reaction:
+                question = f"{reaction} {question}"
 
         # ============================================================
         # TRACK EXACT TARGET FIELD
@@ -1276,6 +1415,19 @@ STRICT RULES:
                 or is_home_context_answer
             )
             and not mentions_financial_answer
+        )
+        invalid_opening_answer = bool(
+            is_opening_turn
+            and not opening_context_only
+            and not mentions_financial_answer
+            and not is_greeting
+            and not is_stop_command
+            and interpreted_intent == Intent.ANSWER
+        )
+        deferred_opening_context = bool(
+            is_opening_turn
+            and not mentions_financial_answer
+            and interpreted_intent in {Intent.SKIP, Intent.UNKNOWN, Intent.REFUSAL}
         )
 
         logger.debug(
@@ -1391,6 +1543,8 @@ STRICT RULES:
             state["needs_followup"] = True
             state["followup_field"] = target_field
             state["clarification_context"] = ""
+            state["opening_context_pending"] = False
+            state["opening_context_attempts"] = 0
             state["interpreted_input"] = {
                 "intent": "answer",
                 "field": "opening_context",
@@ -1413,6 +1567,77 @@ STRICT RULES:
                     )
                 ),
             }
+            return state
+
+        if invalid_opening_answer:
+            if not history and self.system_prompt:
+                history.append({"role": "system", "content": self.system_prompt})
+            history.append({"role": "assistant", "content": question})
+            history.append({"role": "user", "content": user_response})
+            attempts = int(state.get("opening_context_attempts", 0)) + 1
+            state["conversation_history"] = history
+            state["current_question"] = question
+            state["current_question_field"] = "opening_context"
+            state["latest_user_response"] = user_response
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["skip_extraction"] = True
+            state["needs_followup"] = True
+            state["followup_field"] = target_field
+            state["clarification_context"] = ""
+            state["opening_context_attempts"] = attempts
+            state["opening_context_pending"] = attempts < 2
+            state["home_purchase_context"] = {
+                "raw_answer": user_response,
+                "is_first_home": None,
+            }
+            state["interpreted_input"] = {
+                "intent": "clarification",
+                "field": "opening_context",
+                "value": None,
+                "confidence": 1.0,
+                "needs_clarification": attempts < 2,
+                "reason": "unclear first-home answer",
+                "fields": {},
+                "corrections": [],
+                "uncertainty": "unknown",
+                "understanding_version": 1,
+            }
+            state["turn_understanding"] = state["interpreted_input"]
+            return state
+
+        if deferred_opening_context:
+            if not history and self.system_prompt:
+                history.append({"role": "system", "content": self.system_prompt})
+            history.append({"role": "assistant", "content": question})
+            history.append({"role": "user", "content": user_response})
+            state["conversation_history"] = history
+            state["current_question"] = question
+            state["current_question_field"] = "opening_context"
+            state["latest_user_response"] = user_response
+            state["turn_count"] = int(state.get("turn_count", 0)) + 1
+            state["skip_extraction"] = True
+            state["needs_followup"] = True
+            state["followup_field"] = target_field
+            state["clarification_context"] = ""
+            state["opening_context_pending"] = False
+            state["opening_context_attempts"] = 0
+            state["home_purchase_context"] = {
+                "raw_answer": user_response,
+                "is_first_home": None,
+            }
+            state["interpreted_input"] = {
+                "intent": interpreted_intent.value,
+                "field": "opening_context",
+                "value": None,
+                "confidence": 1.0,
+                "needs_clarification": False,
+                "reason": "first-home context was not supplied",
+                "fields": {},
+                "corrections": [],
+                "uncertainty": "unknown",
+                "understanding_version": 1,
+            }
+            state["turn_understanding"] = state["interpreted_input"]
             return state
 
         # ============================================================
@@ -1503,10 +1728,14 @@ STRICT RULES:
             if attempt >= 3:
                 self._defer_field(state, target_field, "too_many_clarification_requests")
             else:
+                clarification_reason = str(interpreted.get("reason", ""))
                 state["followup_field"] = target_field
-                state["clarification_context"] = (
-                    "affirmative_without_value" if affirmative_without_value else user_response
-                )
+                if affirmative_without_value:
+                    state["clarification_context"] = "affirmative_without_value"
+                elif clarification_reason == "vague monetary amount":
+                    state["clarification_context"] = "vague_amount"
+                else:
+                    state["clarification_context"] = user_response
             state["needs_followup"] = True
             return state
 
