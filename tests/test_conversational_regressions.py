@@ -874,6 +874,74 @@ def test_two_unclear_opening_answers_continue_without_looping_or_skipping_down_p
     assert "how much" in questions[2].lower()
 
 
+def test_gibberish_opening_is_reasked_even_if_llm_calls_it_unknown(monkeypatch) -> None:
+    class UnknownInterpreter:
+        def understand_turn(self, *args, **kwargs):
+            return {
+                "intent": "unknown",
+                "value": None,
+                "fields": {},
+                "confidence": 0.9,
+                "needs_clarification": False,
+            }
+
+        def generate_reply(self, *args, **kwargs):
+            return ""
+
+    questions: list[str] = []
+    replies = iter(["def", "yes"])
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "get_answer_prompt", lambda: next(replies))
+    monkeypatch.setattr(interview_agent_module.terminal_ui, "print_thinking", lambda: None)
+    monkeypatch.setattr(
+        interview_agent_module.terminal_ui,
+        "print_agent_message",
+        lambda question, **kwargs: questions.append(question),
+    )
+    agent = InterviewAgent(
+        [{"field": "down_payment", "question": "How much can you put down?"}],
+        "sys",
+        llm_client=UnknownInterpreter(),
+    )
+
+    first = agent({"conversation_history": [], "applicant_profile": {}})
+    first_pending = first["opening_context_pending"]
+    second = agent(first)
+
+    assert first_pending is True
+    assert "first home" in questions[1].lower()
+    assert second["home_purchase_context"]["is_first_home"] is True
+    assert second.get("skipped_fields", []) == []
+
+
+def test_emp_bypasses_incorrect_llm_interpretation() -> None:
+    class IncorrectInterpreter:
+        def understand_turn(self, *args, **kwargs):
+            return {
+                "intent": "clarification",
+                "value": None,
+                "fields": {},
+                "confidence": 0.9,
+                "needs_clarification": True,
+            }
+
+    intent, understood = InterviewAgent([], "sys", IncorrectInterpreter())._interpret_input(
+        {}, "employment_status", "What is your work situation?", "i am emp"
+    )
+
+    assert intent == Intent.ANSWER
+    assert understood["fields"] == {"employment_status": "employed"}
+
+
+def test_malformed_money_grouping_requires_confirmation() -> None:
+    intent, understood = InterviewAgent([], "sys")._interpret_input(
+        {}, "annual_income", "What is your annual income?", "90,0000"
+    )
+
+    assert intent == Intent.CLARIFICATION
+    assert understood["value"] is None
+    assert understood["reason"] == "malformed monetary grouping:90,0000"
+
+
 def test_explicit_closing_phrase_still_finalizes() -> None:
     agent = InterviewAgent([], "sys")
     assert agent._detect_finalize_intent(
@@ -1088,4 +1156,30 @@ def test_closing_transition_acknowledges_zero_debt() -> None:
 
     assert "no monthly debt payments" in transition.lower()
     assert "put everything together" in transition.lower()
+
+
+def test_summary_formats_whole_employment_years_naturally(capsys) -> None:
+    print_summary({"employment_years": 5.0})
+
+    output = capsys.readouterr().out
+    assert "5 years" in output
+    assert "5.0" not in output
+
+
+def test_high_debt_result_gives_specific_next_step() -> None:
+    message, _ = _conversational_message(
+        "Ineligible",
+        {
+            "rule_breakdown": [
+                {"name": "Annual Income", "passed": True},
+                {"name": "Credit Score", "passed": True},
+                {"name": "Debt-to-Income Ratio", "passed": False},
+            ]
+        },
+        {"annual_income": 90000, "monthly_debt": 40000},
+    )
+
+    assert "monthly debt is high relative to your income" in message.lower()
+    assert "reducing those monthly obligations" in message.lower()
+    assert "stronger profile" not in message.lower()
 

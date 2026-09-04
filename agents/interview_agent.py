@@ -951,6 +951,51 @@ STRICT RULES:
         """Use one semantic interpreter; retain deterministic control fallbacks."""
         deterministic = classify_input(user_response)
 
+        if target_field == "employment_status":
+            employment_text = deterministic.normalized_text
+            employment_value = None
+            if re.search(r"\b(?:self[ -]?emp\w*|freelanc\w*|business owner|own (?:a )?business)\b", employment_text):
+                employment_value = "self-employed"
+            elif re.search(r"\b(?:retir\w*|pension(?:er|ed)?)\b", employment_text):
+                employment_value = "retired"
+            elif re.search(r"\b(?:unemploy\w*|between jobs|jobless|laid[ -]?off|out of work)\b", employment_text):
+                employment_value = "unemployed"
+            elif re.fullmatch(r"(?:i (?:am|'m) )?(?:emp|employed)", employment_text):
+                employment_value = "employed"
+            if employment_value:
+                return Intent.ANSWER, {
+                    "intent": "answer",
+                    "field": target_field,
+                    "value": employment_value,
+                    "confidence": 1.0,
+                    "needs_clarification": False,
+                    "reason": "clear employment status",
+                    "fields": {"employment_status": employment_value},
+                    "corrections": [],
+                    "uncertainty": "exact",
+                    "understanding_version": 1,
+                }
+
+        if target_field in {"down_payment", "annual_income", "total_savings", "monthly_debt"}:
+            numeric_token = re.search(r"\d[\d,]*", user_response or "")
+            if (
+                numeric_token
+                and "," in numeric_token.group(0)
+                and not re.fullmatch(r"\d{1,3}(?:,\d{3})+", numeric_token.group(0))
+            ):
+                return Intent.CLARIFICATION, {
+                    "intent": "clarification",
+                    "field": target_field,
+                    "value": None,
+                    "confidence": 1.0,
+                    "needs_clarification": True,
+                    "reason": f"malformed monetary grouping:{numeric_token.group(0)}",
+                    "fields": {},
+                    "corrections": [],
+                    "uncertainty": "unknown",
+                    "understanding_version": 1,
+                }
+
         # "Not much" describes an uncertain amount, not zero. Clarify it
         # before a language model can make an unsupported numeric assumption.
         vague_amount = bool(
@@ -1248,6 +1293,16 @@ STRICT RULES:
                     "monthly_debt": "No problem — what would be your best rough monthly estimate?",
                 }
                 question = vague_prompts.get(target_field, self._clarifying_question(target_field))
+            elif str(state.get("clarification_context", "")).startswith("malformed_amount:"):
+                token = str(state["clarification_context"]).split(":", 1)[1]
+                parts = token.split(",", 1)
+                typed_value = int(token.replace(",", ""))
+                likely_value = int(parts[0] + parts[1][:3])
+                period = " per year" if target_field == "annual_income" else ""
+                question = (
+                    "Just to make sure I understood, did you mean "
+                    f"{likely_value:,} or {typed_value:,}{period}?"
+                )
             else:
                 question = self._clarifying_question(target_field)
         elif validation_question:
@@ -1422,7 +1477,10 @@ STRICT RULES:
             and not mentions_financial_answer
             and not is_greeting
             and not is_stop_command
-            and interpreted_intent == Intent.ANSWER
+            and (
+                interpreted_intent == Intent.ANSWER
+                or classify_input(user_response).intent == Intent.ANSWER
+            )
         )
         deferred_opening_context = bool(
             is_opening_turn
@@ -1734,6 +1792,10 @@ STRICT RULES:
                     state["clarification_context"] = "affirmative_without_value"
                 elif clarification_reason == "vague monetary amount":
                     state["clarification_context"] = "vague_amount"
+                elif clarification_reason.startswith("malformed monetary grouping:"):
+                    state["clarification_context"] = (
+                        "malformed_amount:" + clarification_reason.split(":", 1)[1]
+                    )
                 else:
                     state["clarification_context"] = user_response
             state["needs_followup"] = True

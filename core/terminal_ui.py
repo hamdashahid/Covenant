@@ -128,6 +128,9 @@ def print_summary(profile: dict[str, Any]) -> None:
         value = profile.get(key, "—")
         if key in {"down_payment", "annual_income", "total_savings", "monthly_debt"} and isinstance(value, (int, float)):
             value = f"{value:,.0f}"
+        elif key == "employment_years" and isinstance(value, (int, float)):
+            years = f"{value:g}"
+            value = f"{years} year" if float(value) == 1 else f"{years} years"
         print(f"  {label:<24}: " + Fore.YELLOW + str(value) + Style.RESET_ALL)
     print(Fore.BLUE + Style.BRIGHT + "-" * width + Style.RESET_ALL)
 
@@ -210,7 +213,12 @@ def _conversational_message(
         elif "Annual Income" in failed_set:
             reason = "your income is a bit below what's typically needed"
         elif "Debt-to-Income Ratio" in failed_set:
-            reason = "your monthly debt relative to your income is a bit higher than lenders typically allow"
+            return (
+                strengths_sentence()
+                + "The main concern is that your monthly debt is high relative to your income. "
+                "Reducing those monthly obligations would make the application stronger.",
+                None,
+            )
         elif "Employment Status" in failed_set:
             reason = "your current employment status doesn't meet this pre-check's requirement right now"
         elif "Job Stability" in failed_set:
