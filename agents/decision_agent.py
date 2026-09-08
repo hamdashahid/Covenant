@@ -378,7 +378,7 @@ class DecisionAgent:
                 state["followup_field"] = None
                 state["needs_followup"] = False
                 state["decision_status"] = "Requires More Info"
-                state["decision_summary"] = "User indicated no more information is available."
+                state["decision_summary"] = self._missing_summary(missing)
                 report = self._build_not_evaluated_report(profile, state["decision_summary"])
                 state["final_report"] = report
                 state["lead_step"] = "finalized"
@@ -428,7 +428,7 @@ class DecisionAgent:
             state["followup_field"] = actionable_missing[0]
             state["needs_followup"] = True
             state["decision_status"] = "Requires More Info"
-            state["decision_summary"] = f"Need more validated information: missing {', '.join(missing)}"
+            state["decision_summary"] = self._missing_summary(missing)
             report = {
                 "status": state["decision_status"],
                 "summary": state["decision_summary"],
@@ -470,9 +470,7 @@ class DecisionAgent:
             state["followup_field"] = None
             state["needs_followup"] = False
             state["decision_status"] = "Requires More Info"
-            state["decision_summary"] = (
-                "Max interview turns reached before collecting required validated data"
-            )
+            state["decision_summary"] = self._missing_summary(missing)
             report = {
                 "status": state["decision_status"],
                 "summary": state["decision_summary"],
@@ -507,3 +505,15 @@ class DecisionAgent:
         state["session_tags"] = self._derive_session_tags(report, state)
         state["conversation_tag"] = self._derive_conversation_tag(report, state)
         return state
+    def _missing_summary(self, missing: list[str]) -> str:
+        """Describe missing answers without exposing internal field names."""
+        labels = [FIELD_LABELS.get(field, field.replace("_", " ")).lower() for field in missing]
+        if not labels:
+            return "I still need a little more information before I can complete the pre-check."
+        if len(labels) == 1:
+            readable = labels[0]
+        elif len(labels) == 2:
+            readable = f"{labels[0]} and {labels[1]}"
+        else:
+            readable = f"{', '.join(labels[:3])}, and a few more details"
+        return f"I still need {readable} before I can complete the pre-check."

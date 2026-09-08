@@ -98,7 +98,8 @@ class TestDecisionAgent(unittest.TestCase):
             {"applicant_profile": profile, "skipped_fields": ["down_payment"], "turn_count": 8}
         )
         self.assertEqual(result["decision_status"], "Requires More Info")
-        self.assertIn("Down Payment", result["decision_summary"])
+        self.assertIn("down payment", result["decision_summary"].lower())
+        self.assertNotIn("down_payment", result["decision_summary"])
 
     def test_unemployed_status_ends_precheck_without_asking_past_job_questions(self) -> None:
         evaluator = StubRuleEvaluator({"status": "Eligible"})
